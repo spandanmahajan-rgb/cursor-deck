@@ -25,7 +25,7 @@ let viewActive = DeckControlCenterView(state: stateActive)
 let hostActive = NSHostingController(rootView: viewActive)
 
 let windowActive = NSWindow(
-    contentRect: NSRect(x: 200, y: 300, width: 290, height: 350),
+    contentRect: NSRect(x: 200, y: 300, width: 256, height: 336),
     styleMask: [.titled, .fullSizeContentView],
     backing: .buffered,
     defer: false
@@ -51,7 +51,7 @@ let viewPaused = DeckControlCenterView(state: statePaused)
 let hostPaused = NSHostingController(rootView: viewPaused)
 
 let windowPaused = NSWindow(
-    contentRect: NSRect(x: 530, y: 300, width: 290, height: 350),
+    contentRect: NSRect(x: 500, y: 300, width: 256, height: 336),
     styleMask: [.titled, .fullSizeContentView],
     backing: .buffered,
     defer: false

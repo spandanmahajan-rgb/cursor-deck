@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 
-// MARK: - Control Center Switch
+// MARK: - Control Center Switch (Native macOS 30x17 Capsule)
 
 public struct ControlCenterSwitch: View {
     public let isOn: Bool
@@ -137,17 +137,14 @@ public final class DeckControlCenterState: ObservableObject {
     }
 }
 
-// MARK: - Deck Control Center View
+// MARK: - Native macOS Dropdown Style Popover (Matched to System Wi-Fi Dropdown & Golden Gate Tokens)
 
 public struct DeckControlCenterView: View {
     @ObservedObject public var state: DeckControlCenterState
     public var onDismiss: (() -> Void)?
 
-    @State private var hoveredTile: String? = nil
-    @State private var pressedTile: String? = nil
+    @State private var hoveredRow: String? = nil
     @State private var hoveredAction: String? = nil
-    @State private var pressedAction: String? = nil
-    @State private var hoveredLaunch: Bool = false
 
     public init(state: DeckControlCenterState, onDismiss: (() -> Void)? = nil) {
         self.state = state
@@ -155,80 +152,121 @@ public struct DeckControlCenterView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            headerView
-                .frame(height: 48)
+        VStack(alignment: .leading, spacing: 0) {
+            // 1. MASTER HEADER (Matches "Wi-Fi [Toggle]" row in macOS)
+            masterHeaderRow
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
-                .padding(.bottom, 6)
+                .padding(.bottom, 10)
 
-            // LEVEL 1: Primary Controls 2x2 Grid (Compact)
-            primaryControlsGrid
-                .padding(.horizontal, 12)
-                .padding(.top, 2)
-
-            // Divider 1
             dividerView
-                .padding(.vertical, 10)
 
-            // LEVEL 2: Deck Actions
-            deckActionsRow
-                .padding(.horizontal, 12)
-
-            // Divider 2
-            dividerView
-                .padding(.vertical, 10)
-
-            // LEVEL 3: System Preference (Launch at Login)
-            launchAtLoginRow
-                .padding(.horizontal, 12)
-                .frame(height: 40)
-
-            // Quiet utility footer (Updates & Quit)
-            utilityFooterView
+            // 2. CAPTURE PREFERENCES SECTION (Liquid Glass Circular Badges with Switches)
+            sectionHeader("Preferences")
                 .padding(.horizontal, 14)
-                .padding(.top, 4)
+                .padding(.top, 7)
+                .padding(.bottom, 3)
+
+            VStack(spacing: 2) {
+                // Smart Filter
+                listToggleRow(
+                    id: "filter",
+                    symbol: "line.3.horizontal.decrease",
+                    title: "Smart Filter",
+                    isOn: state.isSmartFilterEnabled,
+                    action: { state.toggleSmartFilter() }
+                )
+
+                // Screenshots
+                listToggleRow(
+                    id: "screenshots",
+                    symbol: "camera.viewfinder",
+                    title: "Screenshots",
+                    isOn: state.isScreenshotWatcherEnabled,
+                    action: { state.toggleScreenshots() }
+                )
+
+                // Shake Clear
+                listToggleRow(
+                    id: "shake",
+                    symbol: "arrow.left.and.right",
+                    title: "Shake to Clear",
+                    isOn: state.isShakeClearEnabled,
+                    action: { state.toggleShakeClear() }
+                )
+            }
+            .padding(.horizontal, 8)
+
+            dividerView
+                .padding(.top, 6)
+
+            // 3. DECK ACTIONS (Horizontal Action Row)
+            sectionHeader("Actions")
+                .padding(.horizontal, 14)
+                .padding(.top, 7)
+                .padding(.bottom, 5)
+
+            deckActionsRow
+                .padding(.horizontal, 10)
+
+            dividerView
+                .padding(.top, 7)
+
+            // 4. SYSTEM PREFERENCE (Launch at Login)
+            VStack(spacing: 2) {
+                listToggleRow(
+                    id: "launch",
+                    symbol: "power",
+                    title: "Launch at Login",
+                    isOn: state.isLaunchAtLoginEnabled,
+                    action: { state.toggleLaunchAtLogin() }
+                )
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+
+            dividerView
+                .padding(.top, 6)
+
+            // 5. UTILITY FOOTER (Matches "Wi-Fi Settings..." in macOS)
+            utilityFooter
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
                 .padding(.bottom, 10)
         }
-        .frame(width: 290)
-        .background(
-            Material.ultraThin
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .frame(width: 256)
+        .background(Material.ultraThin)
     }
 
-    // MARK: - Header View
+    // MARK: - Master Header (Title + Master Tracking Toggle)
 
-    private var headerView: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("CURSOR DECK")
-                    .font(.system(size: 12.5, weight: .semibold, design: .default))
-                    .foregroundColor(.primary)
-                    .accessibilityAddTraits(.isHeader)
+    private var masterHeaderRow: some View {
+        Button(action: {
+            state.toggleTracking()
+        }) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("CursorDeck")
+                        .font(.system(size: 14, weight: .semibold, design: .default))
+                        .foregroundColor(.primary)
 
-                Text(itemCountText)
-                    .font(.system(size: 11.5, weight: .regular, design: .default))
-                    .foregroundColor(.secondary)
+                    Text(statusSubtitle)
+                        .font(.system(size: 11.5, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                ControlCenterSwitch(isOn: !state.isTrackingPaused)
             }
-
-            Spacer()
-
-            // Status Indicator Dot
-            Circle()
-                .fill(state.isTrackingPaused ? Color.secondary.opacity(0.55) : Color.accentColor)
-                .frame(width: 6, height: 6)
-                .accessibilityLabel(state.isTrackingPaused ? "Tracking paused" : "Tracking active")
         }
+        .buttonStyle(.plain)
     }
 
-    private var itemCountText: String {
-        if state.itemCount == 0 {
+    private var statusSubtitle: String {
+        if state.isTrackingPaused {
+            return "Tracking is paused"
+        } else if state.itemCount == 0 {
             return "Nothing in the deck"
         } else if state.itemCount == 1 {
             return "1 item ready"
@@ -237,152 +275,108 @@ public struct DeckControlCenterView: View {
         }
     }
 
-    // MARK: - Primary Controls Grid (2x2 Compact)
+    // MARK: - Section Header
 
-    private var primaryControlsGrid: some View {
-        let columns = [
-            GridItem(.flexible(), spacing: 8),
-            GridItem(.flexible(), spacing: 8)
-        ]
-
-        return LazyVGrid(columns: columns, spacing: 8) {
-            // Tile 1: Tracking
-            controlTile(
-                id: "tracking",
-                symbol: state.isTrackingPaused ? "pause.circle.fill" : "waveform.circle.fill",
-                title: "Tracking",
-                isOn: !state.isTrackingPaused,
-                tooltip: "Pauses or resumes CursorDeck capture",
-                action: { state.toggleTracking() }
-            )
-
-            // Tile 2: Smart Filter
-            controlTile(
-                id: "smartFilter",
-                symbol: "line.3.horizontal.decrease.circle",
-                title: "Smart Filter",
-                isOn: state.isSmartFilterEnabled,
-                tooltip: "Ignores content copied from design tools",
-                action: { state.toggleSmartFilter() }
-            )
-
-            // Tile 3: Screenshots
-            controlTile(
-                id: "screenshots",
-                symbol: "rectangle.dashed.badge.record",
-                title: "Screenshots",
-                isOn: state.isScreenshotWatcherEnabled,
-                tooltip: "Automatically add macOS screenshots to the deck",
-                action: { state.toggleScreenshots() }
-            )
-
-            // Tile 4: Shake Clear
-            controlTile(
-                id: "shakeClear",
-                symbol: "arrow.left.and.right",
-                title: "Shake Clear",
-                isOn: state.isShakeClearEnabled,
-                tooltip: "Shake the cursor to clear the deck",
-                action: { state.toggleShakeClear() }
-            )
-        }
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium, design: .default))
+            .foregroundColor(.secondary)
     }
 
-    private func controlTile(
+    // MARK: - Native List Toggle Row (Matches Wi-Fi list row with Golden Gate Liquid Glass badge)
+
+    private func listToggleRow(
         id: String,
         symbol: String,
         title: String,
         isOn: Bool,
-        tooltip: String,
         action: @escaping () -> Void
     ) -> some View {
-        let isHovered = hoveredTile == id
-        let isPressed = pressedTile == id
-
-        let bgOpacity: Double = isPressed ? 0.14 : (isHovered ? 0.10 : 0.065)
-        let borderOpacity: Double = isHovered ? 0.14 : 0.08
+        let isHovered = hoveredRow == id
 
         return Button(action: action) {
-            VStack(alignment: .leading, spacing: 0) {
-                // Top Row: SF Symbol (Blue when ON) + Switch
-                HStack(alignment: .center) {
+            HStack(spacing: 9) {
+                // Liquid Glass circular icon badge
+                ZStack {
+                    Circle()
+                        .fill(isOn ? Color.accentColor : Color.primary.opacity(0.08))
+                        .frame(width: 26, height: 26)
+
+                    // Specular highlight rim from Liquid Glass - Small token
+                    Circle()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(isOn ? 0.35 : 0.16),
+                                    Color.white.opacity(isOn ? 0.08 : 0.03)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 0.5
+                        )
+                        .frame(width: 26, height: 26)
+
                     Image(systemName: symbol)
-                        .font(.system(size: 18, weight: .medium, design: .default))
-                        .foregroundColor(isOn ? Color.accentColor : Color.secondary.opacity(0.6))
-                        .frame(width: 22, height: 22)
-
-                    Spacer()
-
-                    ControlCenterSwitch(isOn: isOn)
+                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .foregroundColor(isOn ? .white : Color.secondary)
                 }
 
-                Spacer(minLength: 6)
-
-                // Bottom Row: Just the clean title (no redundant "on" / "off" text)
+                // Row title
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium, design: .default))
+                    .font(.system(size: 13, weight: .regular, design: .default))
                     .foregroundColor(.primary)
-                    .lineLimit(1)
+
+                Spacer()
+
+                // Native switch toggle
+                ControlCenterSwitch(isOn: isOn)
             }
-            .padding(10)
-            .frame(height: 70)
-            .background(Color.primary.opacity(bgOpacity))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.primary.opacity(borderOpacity), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .help(tooltip)
+            .padding(.horizontal, 6)
+            .frame(height: 32)
+            .background(isHovered ? Color.primary.opacity(0.07) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { inside in
             withAnimation(.easeOut(duration: 0.12)) {
-                hoveredTile = inside ? id : nil
+                hoveredRow = inside ? id : nil
             }
         }
-        .accessibilityLabel(title)
-        .accessibilityValue(isOn ? "On" : "Off")
-        .accessibilityHint(tooltip)
     }
 
-    // MARK: - Deck Actions Row
+    // MARK: - Deck Actions Row (Liquid Glass compact action buttons)
 
     private var deckActionsRow: some View {
         HStack(spacing: 6) {
-            // Action 1: Copy All
             actionButton(
-                id: "copyAll",
+                id: "copy",
                 symbol: state.isCopiedFeedback ? "checkmark" : "doc.on.doc",
                 label: state.isCopiedFeedback ? "Copied" : "Copy All",
                 isDestructive: false,
                 isEnabled: state.itemCount > 0,
-                hint: "Copies all items in the deck",
                 action: { state.copyAll() }
             )
 
-            // Action 2: Grid
             actionButton(
                 id: "grid",
                 symbol: "square.grid.2x2",
                 label: "Grid",
                 isDestructive: false,
                 isEnabled: state.itemCount > 0,
-                hint: "Opens the deck grid preview",
                 action: { state.openGrid(onDismiss: onDismiss) }
             )
 
-            // Action 3: Clear
             actionButton(
                 id: "clear",
                 symbol: "trash",
                 label: "Clear",
                 isDestructive: true,
                 isEnabled: state.itemCount > 0,
-                hint: "Removes all items from the deck",
                 action: { state.clearDeck() }
             )
         }
-        .frame(height: 54)
+        .frame(height: 32)
     }
 
     private func actionButton(
@@ -391,16 +385,13 @@ public struct DeckControlCenterView: View {
         label: String,
         isDestructive: Bool,
         isEnabled: Bool,
-        hint: String,
         action: @escaping () -> Void
     ) -> some View {
         let isHovered = hoveredAction == id
-        let isPressed = pressedAction == id
 
-        let normalBg = Color.primary.opacity(0.04)
-        let hoverBg = isDestructive ? Color.red.opacity(0.12) : Color.primary.opacity(0.10)
-        let pressBg = isDestructive ? Color.red.opacity(0.20) : Color.primary.opacity(0.14)
-        let currentBg = isPressed ? pressBg : (isHovered ? hoverBg : normalBg)
+        let normalBg = Color.primary.opacity(0.05)
+        let hoverBg = isDestructive ? Color.red.opacity(0.12) : Color.primary.opacity(0.09)
+        let currentBg = isHovered ? hoverBg : normalBg
 
         let fgColor: Color
         if !isEnabled {
@@ -414,9 +405,9 @@ public struct DeckControlCenterView: View {
         return Button(action: {
             if isEnabled { action() }
         }) {
-            VStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.system(size: 16, weight: .regular, design: .default))
+                    .font(.system(size: 11.5, weight: .medium, design: .default))
                     .foregroundColor(fgColor)
 
                 Text(label)
@@ -426,10 +417,10 @@ public struct DeckControlCenterView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(currentBg)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.primary.opacity(isHovered ? 0.12 : 0.06), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(isHovered ? 0.10 : 0.05), lineWidth: 0.5)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
@@ -438,55 +429,18 @@ public struct DeckControlCenterView: View {
                 hoveredAction = inside ? id : nil
             }
         }
-        .accessibilityLabel(label)
-        .accessibilityHint(hint)
     }
 
-    // MARK: - Launch at Login Row
+    // MARK: - Utility Footer
 
-    private var launchAtLoginRow: some View {
-        Button(action: {
-            state.toggleLaunchAtLogin()
-        }) {
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "power")
-                    .font(.system(size: 13, weight: .medium, design: .default))
-                    .foregroundColor(state.isLaunchAtLoginEnabled ? Color.accentColor : Color.secondary.opacity(0.6))
-                    .frame(width: 18)
-
-                Text("Launch at Login")
-                    .font(.system(size: 12.5, weight: .regular, design: .default))
-                    .foregroundColor(.primary)
-
-                Spacer()
-
-                ControlCenterSwitch(isOn: state.isLaunchAtLoginEnabled)
-            }
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(hoveredLaunch ? Color.primary.opacity(0.05) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .onHover { inside in
-            withAnimation(.easeOut(duration: 0.12)) {
-                hoveredLaunch = inside
-            }
-        }
-        .accessibilityLabel("Launch at Login")
-        .accessibilityValue(state.isLaunchAtLoginEnabled ? "On" : "Off")
-    }
-
-    // MARK: - Utility Footer View (Quiet updates & quit)
-
-    private var utilityFooterView: some View {
+    private var utilityFooter: some View {
         HStack {
             Button(action: {
                 onDismiss?()
                 state.checkForUpdates()
             }) {
                 Text("Check for Updates...")
-                    .font(.system(size: 11, weight: .regular, design: .default))
+                    .font(.system(size: 11.5, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
@@ -497,7 +451,7 @@ public struct DeckControlCenterView: View {
                 state.quitApp()
             }) {
                 Text("Quit")
-                    .font(.system(size: 11, weight: .regular, design: .default))
+                    .font(.system(size: 11.5, weight: .regular, design: .default))
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
@@ -510,6 +464,6 @@ public struct DeckControlCenterView: View {
         Rectangle()
             .fill(Color.primary.opacity(0.08))
             .frame(height: 1)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
     }
 }
