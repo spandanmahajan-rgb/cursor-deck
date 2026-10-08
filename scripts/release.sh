@@ -64,7 +64,6 @@ git push origin main || true
 # 7. Create/Upload GitHub Release
 echo "Publishing GitHub Release v$VERSION..."
 gh release create "v$VERSION" \
-  CursorDeck.zip \
   "CursorDeck-v$VERSION.dmg" \
   CursorDeck-Installer.pkg \
   --title "CursorDeck v$VERSION" \
