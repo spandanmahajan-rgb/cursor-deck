@@ -166,9 +166,21 @@ func testHUDPanelLifecycle() {
     print("✅ testHUDPanelLifecycle passed!")
 }
 
+func testPinterestMediaResolverURLDetection() {
+    print("Running testPinterestMediaResolverURLDetection...")
+    let resolver = PinterestMediaResolver.shared
+    assert(resolver.isPinterestURL("https://pin.it/7x3FcJ9B0"), "pin.it should be recognized")
+    assert(resolver.isPinterestURL("https://www.pinterest.com/pin/664281013778109217/"), "canonical pin URL should be recognized")
+    assert(resolver.isPinterestURL("https://in.pinterest.com/pin/12345/"), "localized pin URL should be recognized")
+    assert(!resolver.isPinterestURL("https://google.com"), "google should not be recognized")
+    assert(!resolver.isPinterestURL("https://github.com/pin"), "github should not be recognized")
+    print("✅ testPinterestMediaResolverURLDetection passed!")
+}
+
 print("\n--- Running CursorDeck Core Verification Tests ---")
 testQueueAddAndClear()
 testPasteboardWriterPayload()
 testDragPasteboard()
 testHUDPanelLifecycle()
+testPinterestMediaResolverURLDetection()
 print("All verification tests passed successfully! 🚀\n")

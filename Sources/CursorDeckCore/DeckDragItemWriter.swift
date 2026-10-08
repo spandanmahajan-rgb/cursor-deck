@@ -14,16 +14,24 @@ import UniformTypeIdentifiers
 public final class DeckDragItemWriter: NSObject, NSPasteboardWriting {
     public let fileURL: URL
     private let cachedPNGData: Data?
+    private let cachedGIFData: Data?
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        // Cache PNG bytes upfront so pasteboardPropertyList never blocks the drag loop
-        if let img = NSImage(contentsOf: fileURL),
-           let tiff = img.tiffRepresentation,
-           let rep = NSBitmapImageRep(data: tiff) {
-            self.cachedPNGData = rep.representation(using: .png, properties: [:])
+        let ext = fileURL.pathExtension.lowercased()
+        if ext == "gif" {
+            self.cachedGIFData = try? Data(contentsOf: fileURL)
+            self.cachedPNGData = nil
         } else {
-            self.cachedPNGData = try? Data(contentsOf: fileURL)
+            self.cachedGIFData = nil
+            // Cache PNG bytes upfront so pasteboardPropertyList never blocks the drag loop
+            if let img = NSImage(contentsOf: fileURL),
+               let tiff = img.tiffRepresentation,
+               let rep = NSBitmapImageRep(data: tiff) {
+                self.cachedPNGData = rep.representation(using: .png, properties: [:])
+            } else {
+                self.cachedPNGData = try? Data(contentsOf: fileURL)
+            }
         }
         super.init()
     }
@@ -31,12 +39,17 @@ public final class DeckDragItemWriter: NSObject, NSPasteboardWriting {
     // MARK: - NSPasteboardWriting
 
     public func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
-        return [
+        var types: [NSPasteboard.PasteboardType] = [
             .fileURL,                            // public.file-url
-            .init(rawValue: "NSFilenamesPboardType"), // Legacy Carbon paths — critical for Catalyst/WhatsApp
-            .png,                                // public.png — in-memory image bytes
-            .tiff                                // public.tiff — legacy QuickTime apps
+            .init(rawValue: "NSFilenamesPboardType") // Legacy Carbon paths — critical for Catalyst/WhatsApp
         ]
+        if fileURL.pathExtension.lowercased() == "gif" {
+            types.append(.init(rawValue: "com.compuserve.gif"))
+            types.append(.init(rawValue: "image/gif"))
+        }
+        types.append(.png)                       // public.png — in-memory image bytes
+        types.append(.tiff)                      // public.tiff — legacy QuickTime apps
+        return types
     }
 
     public func writingOptions(forType type: NSPasteboard.PasteboardType,
@@ -54,6 +67,9 @@ public final class DeckDragItemWriter: NSObject, NSPasteboardWriting {
         case .init(rawValue: "NSFilenamesPboardType"):
             // Carbon-era file paths array — required by WhatsApp (Catalyst) and many Electron apps
             return [fileURL.path]
+
+        case .init(rawValue: "com.compuserve.gif"), .init(rawValue: "image/gif"):
+            return cachedGIFData
 
         case .png:
             return cachedPNGData

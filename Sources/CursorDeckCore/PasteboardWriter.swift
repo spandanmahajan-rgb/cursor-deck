@@ -43,6 +43,9 @@ public final class PasteboardWriter {
                 pbItem.setData(data, forType: .png)
             } else if ext == "jpg" || ext == "jpeg" {
                 pbItem.setData(data, forType: .init("public.jpeg"))
+            } else if ext == "gif" {
+                pbItem.setData(data, forType: .init("com.compuserve.gif"))
+                pbItem.setData(data, forType: .init("image/gif"))
             } else {
                 pbItem.setData(data, forType: .tiff)
             }
@@ -86,7 +89,7 @@ public final class PasteboardWriter {
 
         DispatchQueue.global(qos: .userInteractive).async {
             for (index, item) in items.enumerated() {
-                DispatchQueue.main.sync {
+                _ = DispatchQueue.main.sync {
                     self.writeSingleItem(item: item)
                 }
                 
