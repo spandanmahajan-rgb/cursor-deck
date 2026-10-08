@@ -1,12 +1,16 @@
 import AppKit
 import Foundation
+import SwiftUI
 
-public final class MenuBarManager {
+public final class MenuBarManager: NSObject, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
     private let queueManager: DeckQueueManager
     private weak var clipboardWatcher: ClipboardWatcher?
     private weak var screenshotWatcher: ScreenshotWatcher?
     private weak var hudPanel: CursorHUDPanel?
+
+    private var popover: NSPopover?
+    private var controlCenterState: DeckControlCenterState?
 
     public init(
         queueManager: DeckQueueManager,
@@ -18,6 +22,7 @@ public final class MenuBarManager {
         self.clipboardWatcher = clipboardWatcher
         self.screenshotWatcher = screenshotWatcher
         self.hudPanel = hudPanel
+        super.init()
         setupStatusBar()
     }
 
@@ -29,28 +34,72 @@ public final class MenuBarManager {
             button.image = DeckLogoAsset.menuBarImage
             button.imagePosition = .imageOnly
             button.toolTip = "Cursor Deck (Visual Accumulator)"
+            button.target = self
+            button.action = #selector(statusBarButtonClicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        updateMenu()
+        let state = DeckControlCenterState(
+            queueManager: queueManager,
+            clipboardWatcher: clipboardWatcher,
+            screenshotWatcher: screenshotWatcher,
+            hudPanel: hudPanel
+        )
+        self.controlCenterState = state
+
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.animates = true
+        pop.delegate = self
+        pop.contentSize = NSSize(width: 290, height: 350)
+
+        let hostingController = NSHostingController(
+            rootView: DeckControlCenterView(state: state, onDismiss: { [weak pop] in
+                pop?.performClose(nil)
+            })
+        )
+        pop.contentViewController = hostingController
+        self.popover = pop
+
+        updateStatusItemBadge()
 
         queueManager.addObserver { [weak self] _ in
-            self?.updateMenu()
+            self?.updateStatusItemBadge()
         }
     }
 
-    public func updateMenu() {
+    @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp {
+            showContextMenu(sender)
+        } else {
+            togglePopover(sender)
+        }
+    }
+
+    public func togglePopover(_ sender: NSStatusBarButton) {
+        guard let popover = popover else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            controlCenterState?.refresh()
+            popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+            if let window = popover.contentViewController?.view.window {
+                window.makeKey()
+            }
+        }
+    }
+
+    private func showContextMenu(_ sender: NSStatusBarButton) {
         let menu = NSMenu()
         let count = queueManager.count
         let isPaused = clipboardWatcher?.isPaused ?? false
 
-        // Header item
-        let statusText = isPaused ? " (Paused)" : ""
-        let titleItem = NSMenuItem(title: "Cursor Deck: \(count) item\(count == 1 ? "" : "s") loaded\(statusText)", action: nil, keyEquivalent: "")
-        titleItem.isEnabled = false
-        menu.addItem(titleItem)
+        let headerItem = NSMenuItem(title: "Cursor Deck: \(count) item\(count == 1 ? "" : "s")", action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
         menu.addItem(NSMenuItem.separator())
 
-        // Quick Controls
         let copyItem = NSMenuItem(title: "Copy Batch to Clipboard", action: #selector(copyBatch), keyEquivalent: "c")
         copyItem.target = self
         copyItem.isEnabled = count > 0
@@ -63,7 +112,6 @@ public final class MenuBarManager {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Pause / Resume tracking
         let pauseItem = NSMenuItem(
             title: isPaused ? "▶ Resume Tracking" : "⏸ Pause Tracking",
             action: #selector(togglePause),
@@ -72,135 +120,92 @@ public final class MenuBarManager {
         pauseItem.target = self
         menu.addItem(pauseItem)
 
-        // Smart Filter toggle (Filters out Illustrator, Figma, Photoshop internal shape/layer copies)
-        let isFilterOn = clipboardWatcher?.isSmartFilterEnabled ?? true
-        let filterItem = NSMenuItem(
-            title: "Smart Filter (Ignore Design Tools)",
-            action: #selector(toggleSmartFilter),
-            keyEquivalent: ""
-        )
-        filterItem.target = self
-        filterItem.state = isFilterOn ? .on : .off
-        menu.addItem(filterItem)
-
-        // Auto-Collect Screenshots toggle
-        let isScreenshotOn = screenshotWatcher?.isEnabled ?? true
-        let screenshotItem = NSMenuItem(
-            title: "Auto-Collect Screenshots (⌘⇧4, ⌘⇧3)",
-            action: #selector(toggleScreenshotWatcher),
-            keyEquivalent: ""
-        )
-        screenshotItem.target = self
-        screenshotItem.state = isScreenshotOn ? .on : .off
-        menu.addItem(screenshotItem)
-
-        // Shake to Discard toggle
-        let isShakeOn = hudPanel?.shakeDetector.isEnabled ?? true
-        let shakeItem = NSMenuItem(
-            title: "Shake Cursor to Discard Deck",
-            action: #selector(toggleShakeToClear),
-            keyEquivalent: ""
-        )
-        shakeItem.target = self
-        shakeItem.state = isShakeOn ? .on : .off
-        menu.addItem(shakeItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // How to drop instructions
-        let hintSnap = NSMenuItem(title: "💡 Hold ⌘ or ⌥ to magnet-snap deck", action: nil, keyEquivalent: "")
-        hintSnap.isEnabled = false
-        menu.addItem(hintSnap)
-
-        let hintPreview = NSMenuItem(title: "💡 Click deck with ⌥ to open Grid Preview", action: nil, keyEquivalent: "")
-        hintPreview.isEnabled = false
-        menu.addItem(hintPreview)
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Launch at startup option
-        let isLaunchEnabled = LaunchAtLoginManager.shared.isEnabled
-        let launchItem = NSMenuItem(title: "Launch at Startup", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        launchItem.target = self
-        launchItem.state = isLaunchEnabled ? .on : .off
-        menu.addItem(launchItem)
-
-        // Check for updates
         let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
         menu.addItem(updateItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        // Quit item
         let quitItem = NSMenuItem(title: "Quit Cursor Deck", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
         statusItem?.menu = menu
+        sender.performClick(nil)
+        statusItem?.menu = nil // reset so left-click reopens popover
+    }
 
-        if let button = statusItem?.button {
-            button.image = DeckLogoAsset.menuBarImage
-            if isPaused {
-                button.imagePosition = .imageLeft
-                button.title = " ⏸"
-            } else if count > 0 {
-                button.imagePosition = .imageLeft
-                button.title = " \(count)"
-            } else {
-                button.imagePosition = .imageOnly
-                button.title = ""
-            }
+    public func updateMenu() {
+        updateStatusItemBadge()
+        controlCenterState?.refresh()
+    }
+
+    public func updateStatusItemBadge() {
+        guard let button = statusItem?.button else { return }
+        let count = queueManager.count
+        let isPaused = clipboardWatcher?.isPaused ?? false
+        button.image = DeckLogoAsset.menuBarImage
+        if isPaused {
+            button.imagePosition = .imageLeft
+            button.title = " ⏸"
+        } else if count > 0 {
+            button.imagePosition = .imageLeft
+            button.title = " \(count)"
+        } else {
+            button.imagePosition = .imageOnly
+            button.title = ""
         }
     }
 
-    @objc private func copyBatch() {
+    @objc public func copyBatch() {
         PasteboardWriter.shared.writeToPasteboard(items: queueManager.items)
     }
 
-    @objc private func clearDeck() {
+    @objc public func clearDeck() {
         queueManager.clear()
+        updateStatusItemBadge()
     }
 
-    @objc private func togglePause() {
+    @objc public func togglePause() {
         let isNowPaused = !(clipboardWatcher?.isPaused ?? false)
         clipboardWatcher?.isPaused = isNowPaused
         screenshotWatcher?.isPaused = isNowPaused
-        updateMenu()
+        updateStatusItemBadge()
+        controlCenterState?.refresh()
     }
 
-    @objc private func toggleSmartFilter() {
+    @objc public func toggleSmartFilter() {
         if let watcher = clipboardWatcher {
             watcher.isSmartFilterEnabled = !watcher.isSmartFilterEnabled
-            updateMenu()
+            controlCenterState?.refresh()
         }
     }
 
-    @objc private func toggleScreenshotWatcher() {
+    @objc public func toggleScreenshotWatcher() {
         if let watcher = screenshotWatcher {
             watcher.isEnabled = !watcher.isEnabled
-            updateMenu()
+            controlCenterState?.refresh()
         }
     }
 
-    @objc private func toggleShakeToClear() {
+    @objc public func toggleShakeToClear() {
         if let panel = hudPanel {
             panel.shakeDetector.isEnabled = !panel.shakeDetector.isEnabled
-            updateMenu()
+            controlCenterState?.refresh()
         }
     }
 
-    @objc private func toggleLaunchAtLogin() {
+    @objc public func toggleLaunchAtLogin() {
         let current = LaunchAtLoginManager.shared.isEnabled
         LaunchAtLoginManager.shared.setEnabled(!current)
-        updateMenu()
+        controlCenterState?.refresh()
     }
 
-    @objc private func checkForUpdates() {
+    @objc public func checkForUpdates() {
         UpdateManager.shared.checkForUpdates(userInitiated: true)
     }
 
-    @objc private func quitApp() {
+    @objc public func quitApp() {
         NSApplication.shared.terminate(nil)
     }
 }
