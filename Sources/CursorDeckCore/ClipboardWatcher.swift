@@ -75,10 +75,14 @@ public final class ClipboardWatcher {
     }
 
     public func checkForNewClipboardContent() {
-        guard !isPaused else { return }
-
         let currentCount = pasteboard.changeCount
         guard currentCount != lastProcessedChangeCount else { return }
+
+        // If tracking is paused, mark clipboard changes processed so they are ignored now and later
+        guard !isPaused else {
+            lastProcessedChangeCount = currentCount
+            return
+        }
 
         // Attempt immediate extraction
         if extractAndCaptureImage(for: currentCount) {
