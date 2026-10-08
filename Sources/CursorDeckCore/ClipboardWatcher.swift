@@ -44,6 +44,11 @@ public final class ClipboardWatcher {
         "png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "heic", "svg"
     ]
 
+    /// Supported video extensions when copying video files or URLs directly
+    private let supportedVideoExtensions: Set<String> = [
+        "mp4", "mov", "m4v", "webm"
+    ]
+
     public init(queueManager: DeckQueueManager, pasteboard: NSPasteboard = .general) {
         self.queueManager = queueManager
         self.pasteboard = pasteboard
@@ -183,11 +188,15 @@ public final class ClipboardWatcher {
             var captured = false
             for path in filenames {
                 let url = URL(fileURLWithPath: path)
-                if supportedImageExtensions.contains(url.pathExtension.lowercased()) && !url.path.contains("cursor-deck") {
+                let ext = url.pathExtension.lowercased()
+                if supportedImageExtensions.contains(ext) && !url.path.contains("cursor-deck") {
                     if let item = queueManager.add(existingFileURL: url) {
                         delegate?.clipboardWatcher(self, didCaptureItem: item)
                         captured = true
                     }
+                } else if supportedVideoExtensions.contains(ext) && !url.path.contains("cursor-deck") {
+                    handleLocalVideoFile(url)
+                    captured = true
                 }
             }
             if captured {
@@ -201,11 +210,15 @@ public final class ClipboardWatcher {
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             var captured = false
             for url in fileURLs {
-                if supportedImageExtensions.contains(url.pathExtension.lowercased()) && !url.path.contains("cursor-deck") {
+                let ext = url.pathExtension.lowercased()
+                if supportedImageExtensions.contains(ext) && !url.path.contains("cursor-deck") {
                     if let item = queueManager.add(existingFileURL: url) {
                         delegate?.clipboardWatcher(self, didCaptureItem: item)
                         captured = true
                     }
+                } else if supportedVideoExtensions.contains(ext) && !url.path.contains("cursor-deck") {
+                    handleLocalVideoFile(url)
+                    captured = true
                 }
             }
             if captured {
@@ -300,7 +313,22 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 8. Universal fallback: NSImage instantiation from pasteboard
+        // 8. Check for Pinterest Links & Direct Video URLs
+        if let urlString = extractURLStringFromPasteboard() {
+            if PinterestMediaResolver.shared.isPinterestURL(urlString) {
+                lastProcessedChangeCount = changeCount
+                cancelPendingRetries()
+                handlePinterestURL(urlString)
+                return true
+            } else if isDirectVideoURL(urlString) {
+                lastProcessedChangeCount = changeCount
+                cancelPendingRetries()
+                handleDirectVideoURL(urlString)
+                return true
+            }
+        }
+
+        // 9. Universal fallback: NSImage instantiation from pasteboard
         if let image = NSImage(pasteboard: pasteboard), image.size.width > 1, image.size.height > 1 {
             if let tiffData = image.tiffRepresentation,
                let imageRep = NSBitmapImageRep(data: tiffData),
@@ -316,5 +344,97 @@ public final class ClipboardWatcher {
         }
 
         return false
+    }
+
+    // MARK: - Video & Pinterest Helpers
+
+    private func extractURLStringFromPasteboard() -> String? {
+        if let str = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !str.isEmpty,
+           str.hasPrefix("http://") || str.hasPrefix("https://") {
+            return str
+        }
+        if let str = pasteboard.string(forType: .init("public.url"))?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !str.isEmpty,
+           str.hasPrefix("http://") || str.hasPrefix("https://") {
+            return str
+        }
+        return nil
+    }
+
+    private func isDirectVideoURL(_ string: String) -> Bool {
+        guard let url = URL(string: string),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return false
+        }
+        let ext = url.pathExtension.lowercased()
+        return supportedVideoExtensions.contains(ext)
+    }
+
+    private func handleDirectVideoURL(_ string: String) {
+        guard let url = URL(string: string) else { return }
+        downloadAndConvertVideo(url)
+    }
+
+    private func handlePinterestURL(_ urlString: String) {
+        PinterestMediaResolver.shared.resolveMedia(from: urlString) { [weak self] result in
+            guard let self = self, !self.isPaused, let result = result else { return }
+            switch result {
+            case .video(let videoRemoteURL):
+                self.downloadAndConvertVideo(videoRemoteURL)
+            case .image(let imageRemoteURL):
+                self.downloadAndAddImage(imageRemoteURL)
+            }
+        }
+    }
+
+    private func handleLocalVideoFile(_ url: URL) {
+        VideoToGIFConverter.shared.convert(videoURL: url) { [weak self] gifData, _ in
+            guard let self = self, !self.isPaused, let gifData = gifData else { return }
+            DispatchQueue.main.async {
+                if let item = self.queueManager.add(imageData: gifData, extension: "gif") {
+                    self.delegate?.clipboardWatcher(self, didCaptureItem: item)
+                }
+            }
+        }
+    }
+
+    private func downloadAndConvertVideo(_ remoteURL: URL) {
+        let task = URLSession.shared.downloadTask(with: remoteURL) { [weak self] tempURL, _, error in
+            guard let self = self, !self.isPaused, let tempURL = tempURL, error == nil else { return }
+
+            let tempDir = FileManager.default.temporaryDirectory
+            let localVideoURL = tempDir.appendingPathComponent(UUID().uuidString + ".mp4")
+            do {
+                try FileManager.default.moveItem(at: tempURL, to: localVideoURL)
+            } catch {
+                return
+            }
+
+            VideoToGIFConverter.shared.convert(videoURL: localVideoURL) { [weak self] gifData, _ in
+                try? FileManager.default.removeItem(at: localVideoURL)
+                guard let self = self, !self.isPaused, let gifData = gifData else { return }
+                DispatchQueue.main.async {
+                    if let item = self.queueManager.add(imageData: gifData, extension: "gif") {
+                        self.delegate?.clipboardWatcher(self, didCaptureItem: item)
+                    }
+                }
+            }
+        }
+        task.resume()
+    }
+
+    private func downloadAndAddImage(_ remoteURL: URL) {
+        let task = URLSession.shared.dataTask(with: remoteURL) { [weak self] data, _, error in
+            guard let self = self, !self.isPaused, let data = data, error == nil, !data.isEmpty else { return }
+            let ext = remoteURL.pathExtension.lowercased().isEmpty ? "jpg" : remoteURL.pathExtension.lowercased()
+            DispatchQueue.main.async {
+                if let item = self.queueManager.add(imageData: data, extension: ext) {
+                    self.delegate?.clipboardWatcher(self, didCaptureItem: item)
+                }
+            }
+        }
+        task.resume()
     }
 }
