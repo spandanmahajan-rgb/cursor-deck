@@ -96,32 +96,32 @@ public final class UpdateManager {
         let body = (json["body"] as? String) ?? "A new update for CursorDeck is available."
         let htmlURL = (json["html_url"] as? String) ?? "https://github.com/\(UpdateManager.repoOwner)/\(UpdateManager.repoName)/releases"
 
-        // Search for downloadable pkg (preferred for permissions) or zip in release assets
+        // Search for downloadable zip (preferred for seamless passwordless in-place update) or pkg
         var downloadURL: URL?
-        var isZip = false
+        var isZip = true
 
         if let assets = json["assets"] as? [[String: Any]] {
-            // First check for PKG (most reliable across admin & non-admin installs)
+            // First check for ZIP for silent, passwordless auto-update
             for asset in assets {
                 if let name = asset["name"] as? String,
                    let downloadString = asset["browser_download_url"] as? String,
                    let url = URL(string: downloadString),
-                   name.lowercased().hasSuffix(".pkg") {
+                   name.lowercased().hasSuffix(".zip") {
                     downloadURL = url
-                    isZip = false
+                    isZip = true
                     break
                 }
             }
 
-            // Fallback to ZIP if no PKG found
+            // Fallback to PKG if ZIP not present
             if downloadURL == nil {
                 for asset in assets {
                     if let name = asset["name"] as? String,
                        let downloadString = asset["browser_download_url"] as? String,
                        let url = URL(string: downloadString),
-                       name.lowercased().hasSuffix(".zip") {
+                       name.lowercased().hasSuffix(".pkg") {
                         downloadURL = url
-                        isZip = true
+                        isZip = false
                         break
                     }
                 }
