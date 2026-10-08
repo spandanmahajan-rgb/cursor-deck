@@ -163,10 +163,10 @@ public final class MenuBarManager {
     }
 
     @objc private func togglePause() {
-        if let watcher = clipboardWatcher {
-            watcher.isPaused = !watcher.isPaused
-            updateMenu()
-        }
+        let isNowPaused = !(clipboardWatcher?.isPaused ?? false)
+        clipboardWatcher?.isPaused = isNowPaused
+        screenshotWatcher?.isPaused = isNowPaused
+        updateMenu()
     }
 
     @objc private func toggleSmartFilter() {

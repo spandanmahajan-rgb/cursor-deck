@@ -23,6 +23,9 @@ public final class ScreenshotWatcher {
         }
     }
 
+    /// Whether tracking is paused by the user
+    public var isPaused: Bool = false
+
     /// Common localized and third-party screenshot filename prefixes
     private let screenshotPrefixes: [String] = [
         "screenshot",
@@ -137,6 +140,12 @@ public final class ScreenshotWatcher {
             let lowerName = filename.lowercased()
             let isScreenshotName = screenshotPrefixes.contains { lowerName.hasPrefix($0) }
 
+            // If tracking is paused, mark file processed so it's never captured now or later
+            if isPaused {
+                processedFilePaths.insert(fullPath)
+                continue
+            }
+
             // Check file attributes
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: fullPath),
                   let creationDate = attrs[.creationDate] as? Date ?? attrs[.modificationDate] as? Date,
@@ -164,6 +173,7 @@ public final class ScreenshotWatcher {
                     }
 
                     DispatchQueue.main.async {
+                        guard !self.isPaused else { return }
                         print("[ScreenshotWatcher] Captured new screenshot: \(filename) (\(updatedSize) bytes)")
                         self.queueManager.add(existingFileURL: url)
                     }
