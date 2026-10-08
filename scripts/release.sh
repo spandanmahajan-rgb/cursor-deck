@@ -66,6 +66,7 @@ echo "Publishing GitHub Release v$VERSION..."
 gh release create "v$VERSION" \
   "CursorDeck-v$VERSION.dmg" \
   CursorDeck-Installer.pkg \
+  CursorDeck.zip \
   --title "CursorDeck v$VERSION" \
   --notes "$NOTES" \
   --latest

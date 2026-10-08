@@ -51,7 +51,7 @@ public final class MenuBarManager: NSObject, NSPopoverDelegate {
         pop.behavior = .transient
         pop.animates = true
         pop.delegate = self
-        pop.contentSize = NSSize(width: 290, height: 350)
+        pop.contentSize = NSSize(width: 256, height: 336)
 
         let hostingController = NSHostingController(
             rootView: DeckControlCenterView(state: state, onDismiss: { [weak pop] in
