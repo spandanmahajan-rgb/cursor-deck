@@ -34,8 +34,8 @@ echo "Creating CursorDeck.zip..."
 rm -f CursorDeck.zip
 ditto -c -k --sequesterRsrc --keepParent CursorDeck.app CursorDeck.zip
 
-# 5. Build DMG and PKG
-echo "Building DMG & PKG..."
+# 5. Build DMG (Standard Drag-and-Drop Disk Image — No Admin Password Required)
+echo "Building DMG..."
 rm -rf .dmg_staging && mkdir -p .dmg_staging
 cp -R CursorDeck.app .dmg_staging/
 ln -s /Applications .dmg_staging/Applications
@@ -43,18 +43,6 @@ rm -f "CursorDeck-v$VERSION.dmg" "CursorDeck-v1.0.dmg"
 hdiutil create -volname "CursorDeck" -srcfolder .dmg_staging -ov -format UDZO "CursorDeck-v$VERSION.dmg"
 cp "CursorDeck-v$VERSION.dmg" "CursorDeck-v1.0.dmg"
 rm -rf .dmg_staging
-
-mkdir -p .pkg-scripts
-cat << 'EOF' > .pkg-scripts/postinstall
-#!/bin/sh
-xattr -cr /Applications/CursorDeck.app 2>/dev/null || true
-open /Applications/CursorDeck.app 2>/dev/null || true
-exit 0
-EOF
-chmod +x .pkg-scripts/postinstall
-rm -f CursorDeck-Installer.pkg
-pkgbuild --root CursorDeck.app --identifier com.cursordeck.app --version "$VERSION" --install-location /Applications/CursorDeck.app --scripts .pkg-scripts CursorDeck-Installer.pkg
-rm -rf .pkg-scripts
 
 # 6. Commit version bump
 git add .
@@ -65,7 +53,6 @@ git push origin main || true
 echo "Publishing GitHub Release v$VERSION..."
 gh release create "v$VERSION" \
   "CursorDeck-v$VERSION.dmg" \
-  CursorDeck-Installer.pkg \
   CursorDeck.zip \
   --title "CursorDeck v$VERSION" \
   --notes "$NOTES" \
