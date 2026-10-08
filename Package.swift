@@ -22,6 +22,10 @@ let package = Package(
         .executable(
             name: "cursor-deck-tests",
             targets: ["CursorDeckTests"]
+        ),
+        .executable(
+            name: "cursor-deck-preview",
+            targets: ["CursorDeckPreview"]
         )
     ],
     dependencies: [],
@@ -40,6 +44,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "CursorDeckTests",
+            dependencies: ["CursorDeckCore"]
+        ),
+        .executableTarget(
+            name: "CursorDeckPreview",
             dependencies: ["CursorDeckCore"]
         )
     ]
