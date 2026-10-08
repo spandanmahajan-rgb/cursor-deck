@@ -1,0 +1,25 @@
+# Xcode & SPM
+.build/
+.build_cache/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Packaged outputs (created during release)
+*.dmg
+*.pkg
+CursorDeck.zip
+CursorDeck.app/
+.dmg_staging/
+.pkg-scripts/
+CLAUDE_HANDOFF.md
+CURSOR_DECK_PROMPT_FOR_CLAUDE.md
+CursorDeck-Source-For-Claude.zip
