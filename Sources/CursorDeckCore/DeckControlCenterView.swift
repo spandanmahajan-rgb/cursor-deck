@@ -189,7 +189,7 @@ public struct DeckControlCenterView: View {
                 // Shake Clear
                 listToggleRow(
                     id: "shake",
-                    symbol: "arrow.left.and.right",
+                    symbol: "pointer.arrow.motionlines",
                     title: "Shake to Clear",
                     isOn: state.isShakeClearEnabled,
                     action: { state.toggleShakeClear() }
