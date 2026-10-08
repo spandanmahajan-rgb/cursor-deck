@@ -6,8 +6,6 @@ public final class PasteboardWriter {
 
     public init() {}
 
-    /// Writes all accumulated items onto the general pasteboard simultaneously.
-    /// Writes BOTH native NSURL file objects AND NSPasteboardItem instances.
     @discardableResult
     public func writeToPasteboard(items: [DeckItem]) -> Bool {
         guard !items.isEmpty else { return false }
@@ -15,21 +13,16 @@ public final class PasteboardWriter {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
-        // 1. Array of file NSURLs (how Finder and native macOS file drops work)
         let fileURLs: [NSURL] = items.map { $0.fileURL as NSURL }
         let success = pasteboard.writeObjects(fileURLs)
 
-        // 2. Also register legacy NSFilenamesPboardType
         let paths = items.map { $0.fileURL.path }
         pasteboard.setPropertyList(paths, forType: .init("NSFilenamesPboardType"))
 
-        // 3. Register internal marker so ClipboardWatcher knows CursorDeck wrote this
         pasteboard.setString("cursordeck", forType: .init("com.cursordeck.internal-marker"))
-
         return success
     }
 
-    /// Sets the pasteboard to a single item and triggers Cmd+V paste
     public func writeSingleItem(item: DeckItem) -> Bool {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -39,15 +32,21 @@ public final class PasteboardWriter {
             let pbItem = NSPasteboardItem()
             pbItem.setString(item.fileURL.absoluteString, forType: .fileURL)
             let ext = item.fileURL.pathExtension.lowercased()
-            if ext == "png" {
+            // FIX: the original fell through to `.tiff` for every other extension (webp, heic, svg...),
+            // labelling non-TIFF bytes as TIFF => corrupt/blank paste. Only label bytes we know.
+            switch ext {
+            case "png":
                 pbItem.setData(data, forType: .png)
-            } else if ext == "jpg" || ext == "jpeg" {
+            case "jpg", "jpeg":
                 pbItem.setData(data, forType: .init("public.jpeg"))
-            } else if ext == "gif" {
+            case "gif":
                 pbItem.setData(data, forType: .init("com.compuserve.gif"))
                 pbItem.setData(data, forType: .init("image/gif"))
-            } else {
-                pbItem.setData(data, forType: .tiff)
+            default:
+                if let tiff = NSImage(data: data)?.tiffRepresentation {
+                    pbItem.setData(tiff, forType: .tiff)
+                }
+                // otherwise: file URL flavor only
             }
             pbItem.setString("cursordeck", forType: .init("com.cursordeck.internal-marker"))
             written = pasteboard.writeObjects([pbItem])
@@ -59,12 +58,14 @@ public final class PasteboardWriter {
         return written
     }
 
-    /// Simulates Cmd + V keypress event via CGEvent
     public func simulatePasteEvent() {
         let vKeyCode: CGKeyCode = 9 // Virtual key code for 'V'
         
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: false) else {
+        // FIX: private source so a physically held ⌥/⇧/⌘ doesn't merge into the synthetic
+        // keystroke (⌘⌥V = "Paste and Match Style" etc. in many apps).
+        let source = CGEventSource(stateID: .privateState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
             return
         }
 
@@ -72,19 +73,19 @@ public final class PasteboardWriter {
         keyUp.flags = .maskCommand
 
         keyDown.post(tap: .cghidEventTap)
-        usleep(25_000) // 25ms pause
+        usleep(25_000)
         keyUp.post(tap: .cghidEventTap)
     }
 
-    /// Executes a sequential burst drop:
-    /// Iterates through each accumulated item in order, writes it to NSPasteboard,
-    /// and fires a Cmd+V paste event with a delay between drops.
-    /// This allows web apps (Google Slides, Miro, Figma in browser) that only accept 1 image
-    /// per paste event to receive EVERY accumulated image on the canvas!
     public func burstPasteSequentially(items: [DeckItem], delayBetweenMs: UInt32 = 250, completion: (() -> Void)? = nil) {
         guard !items.isEmpty else {
             completion?()
             return
+        }
+
+        // FIX: without this permission CGEvent.post is silently dropped and the burst "pastes" nothing.
+        if !CGPreflightPostEventAccess() {
+            _ = CGRequestPostEventAccess()
         }
 
         DispatchQueue.global(qos: .userInteractive).async {
@@ -93,13 +94,9 @@ public final class PasteboardWriter {
                     self.writeSingleItem(item: item)
                 }
                 
-                // Allow OS pasteboard buffer to settle
-                usleep(50_000) // 50ms
-                
-                // Fire synthetic paste
+                usleep(50_000)
                 self.simulatePasteEvent()
                 
-                // Pause between items so web editor can finish processing and placing the image
                 if index < items.count - 1 {
                     usleep(delayBetweenMs * 1000)
                 }

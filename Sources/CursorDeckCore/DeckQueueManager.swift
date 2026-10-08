@@ -59,6 +59,11 @@ public final class DeckQueueManager {
         cleanup()
     }
 
+    /// Returns true if the file was created or owned by CursorDeck, preventing self-capture loops
+    public func owns(_ url: URL) -> Bool {
+        return url.path.hasPrefix(sessionDirectory.path) || url.path.contains("cursor-deck")
+    }
+
     @discardableResult
     public func add(imageData: Data, extension fileExt: String = "png", originalName: String? = nil) -> DeckItem? {
         guard !imageData.isEmpty else { return nil }
