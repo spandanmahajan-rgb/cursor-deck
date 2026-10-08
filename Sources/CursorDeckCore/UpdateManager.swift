@@ -5,7 +5,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "1.1.2"
+    public static let currentVersion = "1.1.3"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "cursor-deck"
 
@@ -18,6 +18,15 @@ public final class UpdateManager {
     /// Checks GitHub for new releases.
     /// - Parameter userInitiated: If true, shows an alert when already up-to-date or on error. If false, fails silently.
     public func checkForUpdates(userInitiated: Bool) {
+        if !userInitiated {
+            // Background check: throttle to at most once every 24 hours
+            let lastCheck = UserDefaults.standard.double(forKey: "CursorDeck_lastBackgroundCheck")
+            let now = Date().timeIntervalSince1970
+            if now - lastCheck < 86400 {
+                return
+            }
+        }
+
         guard !isChecking else { return }
         isChecking = true
 
@@ -29,6 +38,10 @@ public final class UpdateManager {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isChecking = false
+
+                if !userInitiated {
+                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "CursorDeck_lastBackgroundCheck")
+                }
 
                 guard let data = data, error == nil,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -71,26 +84,45 @@ public final class UpdateManager {
             return
         }
 
+        // If background check, check if user previously clicked "Later" for this specific version
+        if !userInitiated {
+            if let snoozed = UserDefaults.standard.string(forKey: "CursorDeck_snoozedVersion"),
+               snoozed == cleanRemoteVersion {
+                return
+            }
+        }
+
         // Newer version found!
         let body = (json["body"] as? String) ?? "A new update for CursorDeck is available."
         let htmlURL = (json["html_url"] as? String) ?? "https://github.com/\(UpdateManager.repoOwner)/\(UpdateManager.repoName)/releases"
 
-        // Search for downloadable zip or pkg in release assets
+        // Search for downloadable pkg (preferred for permissions) or zip in release assets
         var downloadURL: URL?
-        var isZip = true
+        var isZip = false
 
         if let assets = json["assets"] as? [[String: Any]] {
+            // First check for PKG (most reliable across admin & non-admin installs)
             for asset in assets {
                 if let name = asset["name"] as? String,
                    let downloadString = asset["browser_download_url"] as? String,
-                   let url = URL(string: downloadString) {
-                    if name.lowercased().hasSuffix(".zip") {
+                   let url = URL(string: downloadString),
+                   name.lowercased().hasSuffix(".pkg") {
+                    downloadURL = url
+                    isZip = false
+                    break
+                }
+            }
+
+            // Fallback to ZIP if no PKG found
+            if downloadURL == nil {
+                for asset in assets {
+                    if let name = asset["name"] as? String,
+                       let downloadString = asset["browser_download_url"] as? String,
+                       let url = URL(string: downloadString),
+                       name.lowercased().hasSuffix(".zip") {
                         downloadURL = url
                         isZip = true
                         break
-                    } else if name.lowercased().hasSuffix(".pkg") {
-                        downloadURL = url
-                        isZip = false
                     }
                 }
             }
@@ -121,27 +153,29 @@ public final class UpdateManager {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
+            UserDefaults.standard.removeObject(forKey: "CursorDeck_snoozedVersion")
             if let downloadURL = downloadURL {
                 performDownloadAndInstall(from: downloadURL, isZip: isZip, remoteVersion: remoteVersion)
             } else {
                 NSWorkspace.shared.open(fallbackWebURL)
             }
+        } else {
+            // User clicked "Later": snooze this version for background checks
+            UserDefaults.standard.set(remoteVersion, forKey: "CursorDeck_snoozedVersion")
         }
     }
 
     private func performDownloadAndInstall(from url: URL, isZip: Bool, remoteVersion: String) {
-        let progressAlert = NSAlert()
-        progressAlert.messageText = "Downloading CursorDeck \(remoteVersion)..."
-        progressAlert.informativeText = "Please wait while the update downloads in the background."
-        progressAlert.alertStyle = .informational
-        progressAlert.addButton(withTitle: "Cancel")
+        let alert = NSAlert()
+        alert.messageText = "Downloading Update..."
+        alert.informativeText = "CursorDeck \(remoteVersion) is downloading in the background. Once ready, the installer will launch automatically."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
 
-        let isCancelled = false
-        var downloadTask: URLSessionDownloadTask?
-
-        downloadTask = URLSession.shared.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
+        URLSession.shared.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
             DispatchQueue.main.async {
-                guard let self = self, !isCancelled else { return }
+                guard let self = self else { return }
 
                 guard let tempFileUrl = tempFileUrl, error == nil else {
                     self.showAlert(
@@ -158,9 +192,7 @@ public final class UpdateManager {
                     self.installPkgUpdate(downloadedFile: tempFileUrl)
                 }
             }
-        }
-
-        downloadTask?.resume()
+        }.resume()
     }
 
     private func installZipUpdate(downloadedFile: URL) {
@@ -180,10 +212,30 @@ public final class UpdateManager {
                 return
             }
 
-            // Script to replace app and relaunch cleanly
-            let destinationPath = "/Applications/CursorDeck.app"
+            let destinationPath = Bundle.main.bundlePath.hasPrefix("/Applications") ? Bundle.main.bundlePath : "/Applications/CursorDeck.app"
+            let currentPID = ProcessInfo.processInfo.processIdentifier
+
+            let isDestinationWritable = FileManager.default.isWritableFile(atPath: destinationPath)
+
+            if !isDestinationWritable {
+                // Requires admin privileges to overwrite root-owned /Applications bundle
+                let script = "rm -rf '\(destinationPath)' && cp -R '\(appPath)' '\(destinationPath)' && xattr -cr '\(destinationPath)' && open '\(destinationPath)'"
+                let appleScriptSource = "do shell script \"\(script)\" with administrator privileges"
+                var errorDict: NSDictionary?
+                if let appleScript = NSAppleScript(source: appleScriptSource) {
+                    appleScript.executeAndReturnError(&errorDict)
+                    if errorDict == nil {
+                        NSApplication.shared.terminate(nil)
+                        return
+                    }
+                }
+            }
+
+            // Standard non-privileged swap script waiting for PID exit
             let swapScript = """
-            sleep 0.8
+            while kill -0 \(currentPID) 2>/dev/null; do
+                sleep 0.1
+            done
             rm -rf "\(destinationPath)"
             cp -R "\(appPath)" "\(destinationPath)"
             xattr -cr "\(destinationPath)" 2>/dev/null || true
@@ -196,7 +248,6 @@ public final class UpdateManager {
             relauncher.arguments = ["-c", swapScript]
             try relauncher.run()
 
-            // Exit current app so new one takes over
             NSApplication.shared.terminate(nil)
         } catch {
             showAlert(title: "Update Error", message: "Failed to extract and install update: \(error.localizedDescription)", button: "OK")
@@ -206,9 +257,13 @@ public final class UpdateManager {
     private func installPkgUpdate(downloadedFile: URL) {
         let dest = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("CursorDeck-Installer.pkg")
         try? FileManager.default.removeItem(at: dest)
-        try? FileManager.default.copyItem(at: downloadedFile, to: dest)
-        NSWorkspace.shared.open(dest)
-        NSApplication.shared.terminate(nil)
+        do {
+            try FileManager.default.copyItem(at: downloadedFile, to: dest)
+            NSWorkspace.shared.open(dest)
+            NSApplication.shared.terminate(nil)
+        } catch {
+            showAlert(title: "Update Error", message: "Failed to launch package installer: \(error.localizedDescription)", button: "OK")
+        }
     }
 
     private func showAlert(title: String, message: String, button: String) {
