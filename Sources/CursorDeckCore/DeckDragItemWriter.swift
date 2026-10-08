@@ -1,82 +1,63 @@
 import AppKit
 import Foundation
-import UniformTypeIdentifiers
 
-/// Universal drag item writer.
+/// Drag item writer providing matching flavors for Finder, Slides, Keynote, Figma, Photoshop.
 ///
-/// Provides the exact same pasteboard payload as dragging files out of Finder:
-///   • public.file-url          (native NSURL — primary, always present)
-///   • NSFilenamesPboardType    (legacy file paths array — Catalyst / older Electron)
-///   • public.png               (raw PNG bytes — web canvas / chat image paste)
-///   • public.tiff              (TIFF bytes — legacy Mac apps)
-///
-/// This mimics what Photos.app and Preview.app place on the dragging pasteboard.
+/// FIX summary vs. original:
+///  - No eager decode/re-encode in init(). The original decoded every image, built a full
+///    uncompressed TIFF and re-encoded PNG for EVERY item on the main thread when the drag began
+///    (hundreds of ms per large image => multi-second beachball on a 20-item deck).
+///  - Flavors are declared only if we can really supply them. The original declared .png for GIFs
+///    but returned nil, and declared .tiff for GIFs (a single flattened frame) which some receivers
+///    prefer over the animated GIF.
+///  - JPEGs are handed over as JPEG bytes instead of being re-encoded.
 public final class DeckDragItemWriter: NSObject, NSPasteboardWriting {
     public let fileURL: URL
-    private let cachedPNGData: Data?
-    private let cachedGIFData: Data?
+    private let ext: String
+
+    private static let legacyFilenames = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+    private static let gifUTI = NSPasteboard.PasteboardType("com.compuserve.gif")
+    private static let gifMIME = NSPasteboard.PasteboardType("image/gif")
+    private static let jpegUTI = NSPasteboard.PasteboardType("public.jpeg")
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        let ext = fileURL.pathExtension.lowercased()
-        if ext == "gif" {
-            self.cachedGIFData = try? Data(contentsOf: fileURL)
-            self.cachedPNGData = nil
-        } else {
-            self.cachedGIFData = nil
-            // Cache PNG bytes upfront so pasteboardPropertyList never blocks the drag loop
-            if let img = NSImage(contentsOf: fileURL),
-               let tiff = img.tiffRepresentation,
-               let rep = NSBitmapImageRep(data: tiff) {
-                self.cachedPNGData = rep.representation(using: .png, properties: [:])
-            } else {
-                self.cachedPNGData = try? Data(contentsOf: fileURL)
-            }
-        }
+        self.ext = fileURL.pathExtension.lowercased()
         super.init()
     }
 
-    // MARK: - NSPasteboardWriting
-
     public func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
-        var types: [NSPasteboard.PasteboardType] = [
-            .fileURL,                            // public.file-url
-            .init(rawValue: "NSFilenamesPboardType") // Legacy Carbon paths — critical for Catalyst/WhatsApp
-        ]
-        if fileURL.pathExtension.lowercased() == "gif" {
-            types.append(.init(rawValue: "com.compuserve.gif"))
-            types.append(.init(rawValue: "image/gif"))
+        var types: [NSPasteboard.PasteboardType] = [.fileURL, Self.legacyFilenames]
+        switch ext {
+        case "gif":
+            // Animated: do NOT offer png/tiff, receivers would flatten it to one frame.
+            types += [Self.gifUTI, Self.gifMIME]
+        case "png":
+            types += [.png, .tiff]
+        case "jpg", "jpeg":
+            types += [Self.jpegUTI, .tiff]
+        default:
+            types += [.tiff]
         }
-        types.append(.png)                       // public.png — in-memory image bytes
-        types.append(.tiff)                      // public.tiff — legacy QuickTime apps
         return types
     }
 
     public func writingOptions(forType type: NSPasteboard.PasteboardType,
                                pasteboard: NSPasteboard) -> NSPasteboard.WritingOptions {
-        // Provide all types immediately (no lazy promise) so apps that read at drop-time get data instantly
         return []
     }
 
     public func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
         switch type {
         case .fileURL:
-            // NSURL's native implementation writes the canonical public.file-url string
             return (fileURL as NSURL).pasteboardPropertyList(forType: .fileURL)
-
-        case .init(rawValue: "NSFilenamesPboardType"):
-            // Carbon-era file paths array — required by WhatsApp (Catalyst) and many Electron apps
+        case Self.legacyFilenames:
             return [fileURL.path]
-
-        case .init(rawValue: "com.compuserve.gif"), .init(rawValue: "image/gif"):
-            return cachedGIFData
-
-        case .png:
-            return cachedPNGData
-
+        case Self.gifUTI, Self.gifMIME, .png, Self.jpegUTI:
+            // Raw file bytes, read only when the destination actually asks for them.
+            return try? Data(contentsOf: fileURL)
         case .tiff:
             return NSImage(contentsOf: fileURL)?.tiffRepresentation
-
         default:
             return nil
         }

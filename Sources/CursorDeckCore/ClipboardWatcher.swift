@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 public protocol ClipboardWatcherDelegate: AnyObject {
     func clipboardWatcher(_ watcher: ClipboardWatcher, didCaptureItem item: DeckItem)
@@ -18,12 +20,34 @@ public final class ClipboardWatcher {
     }
 
     /// Whether tracking is paused by the user
-    public var isPaused: Bool = false
+    public var isPaused: Bool = false {
+        didSet {
+            guard isPaused, !oldValue else { return }
+            // FIX: pausing invalidates everything in flight (retries, downloads, conversions,
+            // Pinterest lookups). The original only dropped results that happened to finish
+            // while still paused; a pause+resume in quick succession let stale results through.
+            generation &+= 1
+            cancelPendingRetries()
+            cancelInFlightDownloads()
+        }
+    }
+
+    /// Bumped on pause/stop. Async work captures it at start and is discarded if it changed.
+    private var generation = 0
+    private var pendingRetryChangeCount: Int = -1
+    private var inFlightTasks: [URLSessionTask] = []
+
+    private lazy var downloadSession: URLSession = {
+        // FIX: URLSession.shared has a 7-day resource timeout and no size awareness.
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 20
+        config.timeoutIntervalForResource = 90
+        return URLSession(configuration: config)
+    }()
 
     /// Whether smart filtering for pure vector/layer authoring copies is active
     public var isSmartFilterEnabled: Bool = true
 
-    /// Known internal authoring flavors indicating canvas objects, vectors, or layer copies
     private let excludedPasteboardSignatures: [String] = [
         "com.adobe.illustrator",
         "adobe illustrator",
@@ -39,12 +63,10 @@ public final class ClipboardWatcher {
         "org.blender"
     ]
 
-    /// Supported image extensions when copying files directly
     private let supportedImageExtensions: Set<String> = [
         "png", "jpg", "jpeg", "gif", "webp", "tiff", "tif", "heic", "svg"
     ]
 
-    /// Supported video extensions when copying video files or URLs directly
     private let supportedVideoExtensions: Set<String> = [
         "mp4", "mov", "m4v", "webm"
     ]
@@ -62,6 +84,7 @@ public final class ClipboardWatcher {
         let t = Timer(timeInterval: pollingInterval, repeats: true) { [weak self] _ in
             self?.checkForNewClipboardContent()
         }
+        t.tolerance = pollingInterval * 0.25   // FIX: lets macOS coalesce wakeups (energy)
         RunLoop.main.add(t, forMode: .common)
         self.timer = t
     }
@@ -69,7 +92,9 @@ public final class ClipboardWatcher {
     public func stop() {
         timer?.invalidate()
         timer = nil
+        generation &+= 1
         cancelPendingRetries()
+        cancelInFlightDownloads()
     }
 
     private func cancelPendingRetries() {
@@ -77,28 +102,45 @@ public final class ClipboardWatcher {
             item.cancel()
         }
         retryWorkItems.removeAll()
+        pendingRetryChangeCount = -1
+    }
+
+    private func isCurrent(_ gen: Int) -> Bool {
+        return !isPaused && gen == generation
+    }
+
+    private func track(_ task: URLSessionTask) {
+        inFlightTasks.removeAll { $0.state == .completed }
+        inFlightTasks.append(task)
+    }
+
+    private func cancelInFlightDownloads() {
+        inFlightTasks.forEach { $0.cancel() }
+        inFlightTasks.removeAll()
     }
 
     public func checkForNewClipboardContent() {
         let currentCount = pasteboard.changeCount
         guard currentCount != lastProcessedChangeCount else { return }
 
-        // If tracking is paused, mark clipboard changes processed so they are ignored now and later
         guard !isPaused else {
             lastProcessedChangeCount = currentCount
             return
         }
 
-        // Attempt immediate extraction
+        // FIX (retry storm): the original re-entered here on EVERY 80ms poll while
+        // lastProcessedChangeCount was unchanged. Each pass cancelled the pending retries and
+        // rescheduled all five, so the 150/280/450ms retries never fired, the "give up" branch
+        // was never reached, and any non-image copy (plain text!) made the watcher re-scan the
+        // pasteboard 12x/second until the next copy. One retry chain per changeCount now.
+        if currentCount == pendingRetryChangeCount { return }
+
         if extractAndCaptureImage(for: currentCount) {
             return
         }
 
-        // If not immediately available, schedule rapid asynchronous retries.
-        // Modern browsers (Chrome, Arc, Safari, Edge) and Electron apps (Figma, Slack)
-        // often increment pasteboard changeCount on clearContents(), but serialize
-        // and populate the actual image data asynchronously (15ms - 150ms later).
         cancelPendingRetries()
+        pendingRetryChangeCount = currentCount
 
         let retryDelays: [TimeInterval] = [0.035, 0.080, 0.150, 0.280, 0.450]
         for (index, delay) in retryDelays.enumerated() {
@@ -106,14 +148,17 @@ public final class ClipboardWatcher {
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 guard !self.isPaused else { return }
-                guard self.pasteboard.changeCount == currentCount else { return }
+                guard self.pasteboard.changeCount == currentCount else {
+                    self.pendingRetryChangeCount = -1   // pasteboard moved on; next poll handles it
+                    return
+                }
                 guard self.lastProcessedChangeCount != currentCount else { return }
 
                 if self.extractAndCaptureImage(for: currentCount) {
                     self.cancelPendingRetries()
                 } else if isLast {
-                    // All retries exhausted and no image found — mark as handled (e.g. text/code copy)
                     self.lastProcessedChangeCount = currentCount
+                    self.pendingRetryChangeCount = -1
                 }
             }
             retryWorkItems.append(workItem)
@@ -123,21 +168,17 @@ public final class ClipboardWatcher {
 
     @discardableResult
     private func extractAndCaptureImage(for changeCount: Int) -> Bool {
-        // Ensure the changeCount hasn't changed since this attempt was triggered
         guard pasteboard.changeCount == changeCount else { return false }
 
-        // 0. Ignore CursorDeck's own writes to prevent self-capture loops
         if pasteboard.string(forType: NSPasteboard.PasteboardType("com.cursordeck.internal-marker")) != nil {
             lastProcessedChangeCount = changeCount
             return true
         }
 
-        // Check if types have been declared yet
         guard let types = pasteboard.types, !types.isEmpty else {
             return false
         }
 
-        // 1. Smart Filter: Ignore internal vector/canvas/text copies from creative authoring tools
         if isSmartFilterEnabled {
             let hasEditorSignature = types.contains { t in
                 let s = t.rawValue.lowercased()
@@ -145,7 +186,6 @@ public final class ClipboardWatcher {
             }
 
             if hasEditorSignature {
-                // A. Check if the clipboard contains text (e.g. text selection inside Illustrator or design tool)
                 let isTextCopy = types.contains { t in
                     let s = t.rawValue.lowercased()
                     return s.contains("plain-text") || s.contains("stringpboardtype") || s.contains("text/plain") || s.contains("public.rtf")
@@ -155,14 +195,11 @@ public final class ClipboardWatcher {
                     return true
                 }
 
-                // B. Adobe Illustrator specifically: Illustrator ALWAYS attaches a synthetic fallback TIFF
-                // for every single vector shape, path, or text frame. When Smart Filter is ON, reject these internal copies!
                 let isIllustrator = types.contains { t in
                     let s = t.rawValue.lowercased()
                     return s.contains("com.adobe.illustrator") || s.contains("com.adobe.agave") || s.contains("adobe illustrator")
                 }
                 if isIllustrator {
-                    // Only accept if it's an actual external image file copied from Finder/disk
                     let isExternalFile = types.contains { $0.rawValue == "NSFilenamesPboardType" }
                     if !isExternalFile {
                         lastProcessedChangeCount = changeCount
@@ -170,8 +207,6 @@ public final class ClipboardWatcher {
                     }
                 }
 
-                // C. Other authoring tools (Figma, Sketch, InDesign, Blender):
-                // Reject internal layer/vector nodes that lack explicit raster image files or PNG data
                 let hasExplicitRasterImage = types.contains { t in
                     let s = t.rawValue.lowercased()
                     return s == "public.png" || s == "image/png" || s == "public.jpeg" || s == "image/jpeg" || s == "nsfilenamespboardtype"
@@ -183,18 +218,18 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 2. Check if pasteboard contains Finder file paths (NSFilenamesPboardType)
+        // 2. Finder file paths (NSFilenamesPboardType)
         if let filenames = pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String], !filenames.isEmpty {
             var captured = false
             for path in filenames {
                 let url = URL(fileURLWithPath: path)
                 let ext = url.pathExtension.lowercased()
-                if supportedImageExtensions.contains(ext) && !url.path.contains("cursor-deck") {
+                if supportedImageExtensions.contains(ext) && !queueManager.owns(url) {
                     if let item = queueManager.add(existingFileURL: url) {
                         delegate?.clipboardWatcher(self, didCaptureItem: item)
                         captured = true
                     }
-                } else if supportedVideoExtensions.contains(ext) && !url.path.contains("cursor-deck") {
+                } else if supportedVideoExtensions.contains(ext) && !queueManager.owns(url) {
                     handleLocalVideoFile(url)
                     captured = true
                 }
@@ -206,17 +241,17 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 3. Check if pasteboard contains file URLs (NSURL)
+        // 3. File URLs (NSURL)
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             var captured = false
             for url in fileURLs {
                 let ext = url.pathExtension.lowercased()
-                if supportedImageExtensions.contains(ext) && !url.path.contains("cursor-deck") {
+                if supportedImageExtensions.contains(ext) && !queueManager.owns(url) {
                     if let item = queueManager.add(existingFileURL: url) {
                         delegate?.clipboardWatcher(self, didCaptureItem: item)
                         captured = true
                     }
-                } else if supportedVideoExtensions.contains(ext) && !url.path.contains("cursor-deck") {
+                } else if supportedVideoExtensions.contains(ext) && !queueManager.owns(url) {
                     handleLocalVideoFile(url)
                     captured = true
                 }
@@ -228,7 +263,7 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 4. Check for direct PNG image data (most common in browsers, screenshots, Figma exports)
+        // 4. PNG image data
         let pngTypes = [
             NSPasteboard.PasteboardType.png,
             NSPasteboard.PasteboardType("image/png"),
@@ -245,7 +280,7 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 5. Check for direct JPEG image data
+        // 5. JPEG image data
         let jpegTypes = [
             NSPasteboard.PasteboardType("public.jpeg"),
             NSPasteboard.PasteboardType("image/jpeg"),
@@ -262,7 +297,7 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 6. Check for TIFF image data (common in Safari and macOS native apps)
+        // 6. TIFF image data
         let tiffTypes = [
             NSPasteboard.PasteboardType.tiff,
             NSPasteboard.PasteboardType("public.tiff")
@@ -282,7 +317,7 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 7. Check for WebP / GIF image data
+        // 7. WebP / GIF image data
         let webpTypes = [
             NSPasteboard.PasteboardType("org.webmproject.webp"),
             NSPasteboard.PasteboardType("image/webp")
@@ -313,7 +348,7 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 8. Check for Pinterest Links & Direct Video URLs
+        // 8. Pinterest Links & Direct Video URLs
         if let urlString = extractURLStringFromPasteboard() {
             if PinterestMediaResolver.shared.isPinterestURL(urlString) {
                 lastProcessedChangeCount = changeCount
@@ -328,7 +363,7 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 9. Universal fallback: NSImage instantiation from pasteboard
+        // 9. Universal fallback: NSImage instantiation
         if let image = NSImage(pasteboard: pasteboard), image.size.width > 1, image.size.height > 1 {
             if let tiffData = image.tiffRepresentation,
                let imageRep = NSBitmapImageRep(data: tiffData),
@@ -345,8 +380,6 @@ public final class ClipboardWatcher {
 
         return false
     }
-
-    // MARK: - Video & Pinterest Helpers
 
     private func extractURLStringFromPasteboard() -> String? {
         if let str = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -377,76 +410,109 @@ public final class ClipboardWatcher {
         downloadAndConvertVideo(url)
     }
 
+    private func addCaptured(_ data: Data, ext: String) {
+        if let item = queueManager.add(imageData: data, extension: ext) {
+            delegate?.clipboardWatcher(self, didCaptureItem: item)
+        }
+    }
+
     private func handlePinterestURL(_ urlString: String) {
+        let gen = generation
         PinterestMediaResolver.shared.resolveMedia(from: urlString) { [weak self] result in
-            guard let self = self, !self.isPaused, let result = result else { return }
-            switch result {
-            case .video(let videoRemoteURL):
-                self.downloadAndConvertVideo(videoRemoteURL)
-            case .image(let imageRemoteURL):
-                self.downloadAndAddImage(imageRemoteURL)
+            // Resolver callbacks arrive on URLSession queues; all state is touched on main only.
+            DispatchQueue.main.async {
+                guard let self = self, self.isCurrent(gen), let result = result else { return }
+                switch result {
+                case .video(let videoRemoteURL):
+                    self.downloadAndConvertVideo(videoRemoteURL)
+                case .image(let imageRemoteURL):
+                    self.downloadAndAddImage(imageRemoteURL)
+                }
             }
         }
     }
 
     private func handleLocalVideoFile(_ url: URL) {
+        let gen = generation
+        // convert() completes on the main queue (the original re-dispatched to main a second time)
         VideoToGIFConverter.shared.convert(videoURL: url) { [weak self] gifData, _ in
-            guard let self = self, !self.isPaused, let gifData = gifData else { return }
-            DispatchQueue.main.async {
-                if let item = self.queueManager.add(imageData: gifData, extension: "gif") {
-                    self.delegate?.clipboardWatcher(self, didCaptureItem: item)
-                }
-            }
+            guard let self = self, self.isCurrent(gen), let gifData = gifData else { return }
+            self.addCaptured(gifData, ext: "gif")
         }
     }
 
     private func downloadAndConvertVideo(_ remoteURL: URL) {
+        let gen = generation
+
         if remoteURL.pathExtension.lowercased() == "m3u8" || remoteURL.absoluteString.contains(".m3u8") {
             VideoToGIFConverter.shared.convertHLS(streamURL: remoteURL) { [weak self] gifData, _ in
-                guard let self = self, !self.isPaused, let gifData = gifData else { return }
-                DispatchQueue.main.async {
-                    if let item = self.queueManager.add(imageData: gifData, extension: "gif") {
-                        self.delegate?.clipboardWatcher(self, didCaptureItem: item)
-                    }
-                }
+                guard let self = self, self.isCurrent(gen), let gifData = gifData else { return }
+                self.addCaptured(gifData, ext: "gif")
             }
             return
         }
 
-        let task = URLSession.shared.downloadTask(with: remoteURL) { [weak self] tempURL, _, error in
-            guard let self = self, !self.isPaused, let tempURL = tempURL, error == nil else { return }
+        // FIX: cap the download. A copied link to a multi-GB .mp4 was downloaded in full
+        // just to read 4 seconds of it.
+        let maxBytes: Int64 = 150 * 1024 * 1024
+        var sizeObservation: NSKeyValueObservation?
 
-            let tempDir = FileManager.default.temporaryDirectory
-            let localVideoURL = tempDir.appendingPathComponent(UUID().uuidString + ".mp4")
+        let task = downloadSession.downloadTask(with: remoteURL) { [weak self] tempURL, response, error in
+            sizeObservation?.invalidate()
+            sizeObservation = nil
+
+            // On any early return the system deletes tempURL for us (no orphan).
+            guard let tempURL = tempURL, error == nil else { return }
+            // FIX: downloadTask treats HTTP 403/404 as success and hands back the error page body.
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return }
+
+            let localVideoURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".mp4")
             do {
                 try FileManager.default.moveItem(at: tempURL, to: localVideoURL)
             } catch {
                 return
             }
 
-            VideoToGIFConverter.shared.convert(videoURL: localVideoURL) { [weak self] gifData, _ in
-                try? FileManager.default.removeItem(at: localVideoURL)
-                guard let self = self, !self.isPaused, let gifData = gifData else { return }
-                DispatchQueue.main.async {
-                    if let item = self.queueManager.add(imageData: gifData, extension: "gif") {
-                        self.delegate?.clipboardWatcher(self, didCaptureItem: item)
-                    }
+            DispatchQueue.main.async {
+                guard let self = self, self.isCurrent(gen) else {
+                    try? FileManager.default.removeItem(at: localVideoURL)
+                    return
+                }
+                VideoToGIFConverter.shared.convert(videoURL: localVideoURL) { [weak self] gifData, _ in
+                    try? FileManager.default.removeItem(at: localVideoURL)
+                    guard let self = self, self.isCurrent(gen), let gifData = gifData else { return }
+                    self.addCaptured(gifData, ext: "gif")
                 }
             }
         }
+        sizeObservation = task.observe(\.countOfBytesReceived, options: [.new]) { t, _ in
+            if t.countOfBytesReceived > maxBytes { t.cancel() }
+        }
+        track(task)
         task.resume()
     }
 
     private func downloadAndAddImage(_ remoteURL: URL) {
-        let task = URLSession.shared.dataTask(with: remoteURL) { [weak self] data, _, error in
-            guard let self = self, !self.isPaused, let data = data, error == nil, !data.isEmpty else { return }
-            let ext = remoteURL.pathExtension.lowercased().isEmpty ? "jpg" : remoteURL.pathExtension.lowercased()
+        let gen = generation
+        let task = downloadSession.dataTask(with: remoteURL) { [weak self] data, response, error in
+            guard let data = data, error == nil, !data.isEmpty, data.count <= 60 * 1024 * 1024 else { return }
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return }
+            // FIX: sniff the real format. The URL extension is often missing/wrong on CDNs, and an
+            // HTML error page used to be saved as "image.jpg" and added to the deck.
+            guard let ext = ClipboardWatcher.imageExtension(for: data) else { return }
             DispatchQueue.main.async {
-                if let item = self.queueManager.add(imageData: data, extension: ext) {
-                    self.delegate?.clipboardWatcher(self, didCaptureItem: item)
-                }
+                guard let self = self, self.isCurrent(gen) else { return }
+                self.addCaptured(data, ext: ext)
             }
         }
+        track(task)
         task.resume()
+    }
+
+    private static func imageExtension(for data: Data) -> String? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let uti = CGImageSourceGetType(source) else { return nil }
+        return UTType(uti as String)?.preferredFilenameExtension
     }
 }
