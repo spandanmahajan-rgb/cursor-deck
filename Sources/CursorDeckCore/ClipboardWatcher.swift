@@ -401,6 +401,18 @@ public final class ClipboardWatcher {
     }
 
     private func downloadAndConvertVideo(_ remoteURL: URL) {
+        if remoteURL.pathExtension.lowercased() == "m3u8" || remoteURL.absoluteString.contains(".m3u8") {
+            VideoToGIFConverter.shared.convertHLS(streamURL: remoteURL) { [weak self] gifData, _ in
+                guard let self = self, !self.isPaused, let gifData = gifData else { return }
+                DispatchQueue.main.async {
+                    if let item = self.queueManager.add(imageData: gifData, extension: "gif") {
+                        self.delegate?.clipboardWatcher(self, didCaptureItem: item)
+                    }
+                }
+            }
+            return
+        }
+
         let task = URLSession.shared.downloadTask(with: remoteURL) { [weak self] tempURL, _, error in
             guard let self = self, !self.isPaused, let tempURL = tempURL, error == nil else { return }
 

@@ -174,7 +174,66 @@ func testPinterestMediaResolverURLDetection() {
     assert(resolver.isPinterestURL("https://in.pinterest.com/pin/12345/"), "localized pin URL should be recognized")
     assert(!resolver.isPinterestURL("https://google.com"), "google should not be recognized")
     assert(!resolver.isPinterestURL("https://github.com/pin"), "github should not be recognized")
+
+    // Test robust Pin ID extraction
+    let id1 = resolver.extractPinId(from: "https://www.pinterest.com/pin/664281013778109217/")
+    assert(id1 == "664281013778109217", "Should extract id from canonical URL")
+
+    let id2 = resolver.extractPinId(from: "https://www.pinterest.com/pin/venus-motion-design-664281013778109217/")
+    assert(id2 == "664281013778109217", "Should extract id from slugged single dash URL")
+
+    let id3 = resolver.extractPinId(from: "https://www.pinterest.com/pin/origami--664281013778109217/?invite_code=xyz")
+    assert(id3 == "664281013778109217", "Should extract id with double dash and query params")
+
+    let id4 = resolver.extractPinId(from: "https://in.pinterest.com/pin/664281013778109217/sent/?invite_code=abc")
+    assert(id4 == "664281013778109217", "Should extract id with subpaths")
     print("✅ testPinterestMediaResolverURLDetection passed!")
+}
+
+func testPinterestLiveVideoResolution() {
+    print("Running testPinterestLiveVideoResolution...")
+    let semaphore = DispatchSemaphore(value: 0)
+    var resolvedResult: PinterestMediaResult?
+
+    PinterestMediaResolver.shared.resolveMedia(from: "https://www.pinterest.com/pin/664281013778109217/") { res in
+        resolvedResult = res
+        semaphore.signal()
+    }
+
+    _ = semaphore.wait(timeout: .now() + 10.0)
+
+    guard let result = resolvedResult else {
+        fatalError("Pinterest media resolution timed out or failed")
+    }
+
+    switch result {
+    case .video(let videoURL):
+        print("   Direct video pin resolved to stream URL:", videoURL)
+        assert(videoURL.absoluteString.contains("pinimg.com/videos/"), "Must be a direct Pinterest CDN video URL")
+    case .image(let imageURL):
+        fatalError("Video pin should NEVER resolve to an image: \(imageURL)")
+    }
+
+    // Also test Story Pin resolution (pin with HLS / Idea pin)
+    let sem2 = DispatchSemaphore(value: 0)
+    var storyResult: PinterestMediaResult?
+    PinterestMediaResolver.shared.resolveMedia(from: "https://www.pinterest.com/pin/593912269657451880/") { res in
+        storyResult = res
+        sem2.signal()
+    }
+    _ = sem2.wait(timeout: .now() + 10.0)
+    guard let sRes = storyResult else {
+        fatalError("Story pin media resolution failed")
+    }
+    switch sRes {
+    case .video(let videoURL):
+        print("   Story/Idea video pin resolved to stream URL:", videoURL)
+        assert(videoURL.absoluteString.contains("pinimg.com/videos/"), "Must be a valid video stream")
+    case .image(let imageURL):
+        fatalError("Story video pin should NEVER resolve to an image: \(imageURL)")
+    }
+
+    print("✅ testPinterestLiveVideoResolution passed!")
 }
 
 print("\n--- Running CursorDeck Core Verification Tests ---")
@@ -183,4 +242,5 @@ testPasteboardWriterPayload()
 testDragPasteboard()
 testHUDPanelLifecycle()
 testPinterestMediaResolverURLDetection()
+testPinterestLiveVideoResolution()
 print("All verification tests passed successfully! 🚀\n")
