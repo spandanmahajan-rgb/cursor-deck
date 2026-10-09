@@ -139,19 +139,62 @@ public final class DeckControlCenterState: ObservableObject {
 
 // MARK: - Native macOS Dropdown Style Popover (Matched to System Wi-Fi Dropdown & Golden Gate Tokens)
 
+public enum PopoverPage {
+    case controls
+    case howToUse
+}
+
 public struct DeckControlCenterView: View {
     @ObservedObject public var state: DeckControlCenterState
     public var onDismiss: (() -> Void)?
 
+    @State public var currentPage: PopoverPage
     @State private var hoveredRow: String? = nil
     @State private var hoveredAction: String? = nil
+    @State private var isHowToUseHovered: Bool = false
 
-    public init(state: DeckControlCenterState, onDismiss: (() -> Void)? = nil) {
+    public init(
+        state: DeckControlCenterState,
+        onDismiss: (() -> Void)? = nil,
+        initialPage: PopoverPage = .controls
+    ) {
         self.state = state
         self.onDismiss = onDismiss
+        self._currentPage = State(initialValue: initialPage)
     }
 
     public var body: some View {
+        ZStack {
+            if currentPage == .controls {
+                controlsPage
+                    .frame(width: 256, height: 350)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading),
+                        removal: .move(edge: .leading)
+                    ))
+            } else {
+                howToUsePage
+                    .frame(width: 256, height: 350)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing),
+                        removal: .move(edge: .trailing)
+                    ))
+            }
+        }
+        .frame(width: 256, height: 350)
+        .clipped()
+        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: currentPage)
+        .background(Material.ultraThin)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
+    }
+
+    // MARK: - Controls Page (Default Popover View)
+
+    private var controlsPage: some View {
         VStack(alignment: .leading, spacing: 0) {
             // 1. MASTER HEADER (Matches "Wi-Fi [Toggle]" row in macOS)
             masterHeaderRow
@@ -228,14 +271,12 @@ public struct DeckControlCenterView: View {
             dividerView
                 .padding(.top, 6)
 
-            // 5. UTILITY FOOTER (Matches "Wi-Fi Settings..." in macOS)
+            // 5. UTILITY FOOTER (Updates, Quit, and How to Use)
             utilityFooter
                 .padding(.horizontal, 14)
                 .padding(.top, 6)
-                .padding(.bottom, 10)
+                .padding(.bottom, 8)
         }
-        .frame(width: 256)
-        .background(Material.ultraThin)
     }
 
     // MARK: - Master Header (Title + Master Tracking Toggle)
@@ -434,28 +475,273 @@ public struct DeckControlCenterView: View {
     // MARK: - Utility Footer
 
     private var utilityFooter: some View {
-        HStack {
+        VStack(spacing: 5) {
+            HStack {
+                Button(action: {
+                    onDismiss?()
+                    state.checkForUpdates()
+                }) {
+                    Text("Check for Updates...")
+                        .font(.system(size: 11.5, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button(action: {
+                    state.quitApp()
+                }) {
+                    Text("Quit")
+                        .font(.system(size: 11.5, weight: .regular, design: .default))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
             Button(action: {
-                onDismiss?()
-                state.checkForUpdates()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    currentPage = .howToUse
+                }
             }) {
-                Text("Check for Updates...")
-                    .font(.system(size: 11.5, weight: .regular, design: .default))
-                    .foregroundColor(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+
+                    Text("How to Use")
+                        .font(.system(size: 11.5, weight: .medium, design: .default))
+                        .foregroundColor(.primary.opacity(0.9))
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3.5)
+                .background(isHowToUseHovered ? Color.primary.opacity(0.065) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
             .buttonStyle(.plain)
-
-            Spacer()
-
-            Button(action: {
-                state.quitApp()
-            }) {
-                Text("Quit")
-                    .font(.system(size: 11.5, weight: .regular, design: .default))
-                    .foregroundColor(.secondary)
+            .onHover { inside in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHowToUseHovered = inside
+                }
             }
-            .buttonStyle(.plain)
         }
+    }
+
+    // MARK: - How to Use Page (Slide-over view with clear instructions & hotkeys)
+
+    private var howToUsePage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header with Back button
+            HStack {
+                Button(action: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                        currentPage = .controls
+                    }
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Back")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(.accentColor)
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
+                    .background(Color.primary.opacity(0.001))
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text("How to Use")
+                    .font(.system(size: 13, weight: .semibold, design: .default))
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                // Invisible spacer for centered title alignment
+                HStack(spacing: 3) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Back")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .opacity(0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 11)
+            .padding(.bottom, 9)
+
+            dividerView
+
+            // Scrollable Instructions List (Visible scrollbar, generous breathing room)
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    // SECTION 1: CORE ACTIONS
+                    sectionHeader("Core Actions & Gestures")
+                        .padding(.top, 4)
+
+                    instructionRow(
+                        symbol: "doc.on.doc",
+                        title: "Collect Images",
+                        badge: "⌘ C",
+                        description: "Right-click any image & copy (or press ⌘C) to start building your deck."
+                    )
+
+                    instructionRow(
+                        symbol: "camera.viewfinder",
+                        title: "Screenshots",
+                        badge: "⌘ ⇧ 4",
+                        description: "Screenshots join the pill directly without cluttering your desktop."
+                    )
+
+                    instructionRow(
+                        symbol: "film.stack",
+                        title: "Pinterest to GIF",
+                        badge: "URL",
+                        description: "Copy a Pinterest video URL; auto-converts to a looping GIF (up to 4s)."
+                    )
+
+                    instructionRow(
+                        symbol: "arrow.down.doc",
+                        title: "Drop on Slides",
+                        badge: "⌘ + Drag",
+                        description: "Hold ⌘ to snap pill, drag to canvas, release ⌘. Drop on green + icon."
+                    )
+
+                    instructionRow(
+                        symbol: "bubble.left.and.bubble.right",
+                        title: "Copy for Chat",
+                        badge: "⌘ + Click",
+                        description: "⌘ + Click the pill to arm clipboard, then press ⌘V in WhatsApp or chat."
+                    )
+
+                    instructionRow(
+                        symbol: "square.grid.2x2",
+                        title: "Preview Grid",
+                        badge: "⌥ + Click",
+                        description: "Option + Click pill to inspect images or delete individual items (✕)."
+                    )
+
+                    instructionRow(
+                        symbol: "pointer.arrow.motionlines",
+                        title: "Shake to Clear",
+                        badge: "Shake",
+                        description: "Rapidly shake cursor back & forth to empty the entire deck."
+                    )
+
+                    dividerView
+                        .padding(.vertical, 3)
+
+                    // SECTION 2: SETTINGS & CONTROLS
+                    sectionHeader("Settings & Controls")
+
+                    instructionRow(
+                        symbol: "power",
+                        title: "CursorDeck Switch",
+                        badge: nil,
+                        description: "Master toggle to pause or resume tracking whenever you need."
+                    )
+
+                    instructionRow(
+                        symbol: "line.3.horizontal.decrease",
+                        title: "Smart Filter",
+                        badge: nil,
+                        description: "Ignores internal shape copies from Figma, Photoshop & Illustrator."
+                    )
+
+                    instructionRow(
+                        symbol: "camera.viewfinder",
+                        title: "Screenshots",
+                        badge: nil,
+                        description: "Toggles whether desktop screenshots are automatically collected."
+                    )
+
+                    instructionRow(
+                        symbol: "pointer.arrow.motionlines",
+                        title: "Shake to Clear",
+                        badge: nil,
+                        description: "Enables or disables rapid cursor shake gesture discard."
+                    )
+
+                    instructionRow(
+                        symbol: "power.circle",
+                        title: "Launch at Login",
+                        badge: nil,
+                        description: "Runs CursorDeck silently in menu bar on Mac startup."
+                    )
+
+                    instructionRow(
+                        symbol: "slider.horizontal.3",
+                        title: "Action Bar",
+                        badge: nil,
+                        description: "Quick buttons for Copy All, Grid Preview, and Clear."
+                    )
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 14)
+            }
+        }
+    }
+
+    private func instructionRow(
+        symbol: String,
+        title: String,
+        badge: String?,
+        description: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Liquid Glass icon badge (Golden Gate token style)
+            ZStack {
+                Circle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(width: 25, height: 25)
+
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.18), Color.white.opacity(0.04)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        ),
+                        lineWidth: 0.5
+                    )
+                    .frame(width: 25, height: 25)
+
+                Image(systemName: symbol)
+                    .font(.system(size: 11.5, weight: .medium, design: .default))
+                    .foregroundColor(Color.secondary)
+            }
+            .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2.5) {
+                HStack(alignment: .center, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 4)
+
+                    if let badge = badge {
+                        KeycapBadgeView(badge)
+                    }
+                }
+
+                Text(description)
+                    .font(.system(size: 11, weight: .regular, design: .default))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(2)
+            }
+        }
+        .padding(.vertical, 2.5)
     }
 
     // MARK: - Divider
@@ -467,3 +753,55 @@ public struct DeckControlCenterView: View {
             .padding(.horizontal, 10)
     }
 }
+
+// MARK: - Keycap Badge View (Mac HIG breathable keycaps)
+
+public struct KeycapBadgeView: View {
+    public let badge: String
+
+    public init(_ badge: String) {
+        self.badge = badge
+    }
+
+    public var body: some View {
+        HStack(spacing: 2.5) {
+            ForEach(tokens(for: badge), id: \.self) { token in
+                if token == "+" {
+                    Text("+")
+                        .font(.system(size: 8.5, weight: .regular))
+                        .foregroundColor(.secondary.opacity(0.8))
+                } else {
+                    Text(token)
+                        .font(.system(size: token.count == 1 ? 10.5 : 9.5, weight: .medium, design: .default))
+                        .foregroundColor(.primary.opacity(0.88))
+                        .padding(.horizontal, token.count == 1 ? 4.5 : 5.5)
+                        .padding(.vertical, 2.5)
+                        .background(Color.primary.opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 3.5, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private func tokens(for string: String) -> [String] {
+        switch string {
+        case "⌘ C":
+            return ["⌘", "C"]
+        case "⌘ ⇧ 4":
+            return ["⌘", "⇧", "4"]
+        case "⌘ + Drag":
+            return ["⌘", "+", "Drag"]
+        case "⌘ + Click":
+            return ["⌘", "+", "Click"]
+        case "⌥ + Click":
+            return ["⌥", "+", "Click"]
+        default:
+            return [string]
+        }
+    }
+}
+
