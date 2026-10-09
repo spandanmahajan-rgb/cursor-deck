@@ -12,7 +12,7 @@ for _ in 1...6 {
     queueManager.add(imageData: dummyData, extension: "png")
 }
 
-// 1. ACTIVE STATE WINDOW
+// 1. CONTROLS VIEW WINDOW
 let stateActive = DeckControlCenterState(queueManager: queueManager)
 stateActive.itemCount = 6
 stateActive.isTrackingPaused = false
@@ -21,70 +21,62 @@ stateActive.isScreenshotWatcherEnabled = true
 stateActive.isShakeClearEnabled = true
 stateActive.isLaunchAtLoginEnabled = true
 
-let viewActive = DeckControlCenterView(state: stateActive)
-let hostActive = NSHostingController(rootView: viewActive)
+let viewControls = DeckControlCenterView(state: stateActive, initialPage: .controls)
+let hostControls = NSHostingController(rootView: viewControls)
 
-let windowActive = NSWindow(
-    contentRect: NSRect(x: 200, y: 300, width: 256, height: 336),
+let windowControls = NSWindow(
+    contentRect: NSRect(x: 200, y: 300, width: 256, height: 350),
     styleMask: [.titled, .fullSizeContentView],
     backing: .buffered,
     defer: false
 )
-windowActive.titleVisibility = .hidden
-windowActive.titlebarAppearsTransparent = true
-windowActive.isOpaque = false
-windowActive.backgroundColor = .clear
-windowActive.hasShadow = true
-windowActive.contentViewController = hostActive
-windowActive.makeKeyAndOrderFront(nil)
+windowControls.titleVisibility = .hidden
+windowControls.titlebarAppearsTransparent = true
+windowControls.isOpaque = false
+windowControls.backgroundColor = .clear
+windowControls.hasShadow = true
+windowControls.contentViewController = hostControls
+windowControls.makeKeyAndOrderFront(nil)
 
-// 2. PAUSED STATE WINDOW
-let emptyQueue = DeckQueueManager()
-let statePaused = DeckControlCenterState(queueManager: emptyQueue)
-statePaused.isTrackingPaused = true
-statePaused.isSmartFilterEnabled = true
-statePaused.isScreenshotWatcherEnabled = false
-statePaused.isShakeClearEnabled = true
-statePaused.isLaunchAtLoginEnabled = false
+// 2. HOW TO USE VIEW WINDOW
+let viewHowToUse = DeckControlCenterView(state: stateActive, initialPage: .howToUse)
+let hostHowToUse = NSHostingController(rootView: viewHowToUse)
 
-let viewPaused = DeckControlCenterView(state: statePaused)
-let hostPaused = NSHostingController(rootView: viewPaused)
-
-let windowPaused = NSWindow(
-    contentRect: NSRect(x: 500, y: 300, width: 256, height: 336),
+let windowHowToUse = NSWindow(
+    contentRect: NSRect(x: 500, y: 300, width: 256, height: 350),
     styleMask: [.titled, .fullSizeContentView],
     backing: .buffered,
     defer: false
 )
-windowPaused.titleVisibility = .hidden
-windowPaused.titlebarAppearsTransparent = true
-windowPaused.isOpaque = false
-windowPaused.backgroundColor = .clear
-windowPaused.hasShadow = true
-windowPaused.contentViewController = hostPaused
-windowPaused.makeKeyAndOrderFront(nil)
+windowHowToUse.titleVisibility = .hidden
+windowHowToUse.titlebarAppearsTransparent = true
+windowHowToUse.isOpaque = false
+windowHowToUse.backgroundColor = .clear
+windowHowToUse.hasShadow = true
+windowHowToUse.contentViewController = hostHowToUse
+windowHowToUse.makeKeyAndOrderFront(nil)
 
 NSApp.activate(ignoringOtherApps: true)
 
-DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-    let outputActive = "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview_active.png"
-    let outputPaused = "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview_paused.png"
+DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+    let outputControls = "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview_controls.png"
+    let outputHowToUse = "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview_how_to_use.png"
     
     let task1 = Process()
     task1.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    task1.arguments = ["-l", "\(windowActive.windowNumber)", "-o", outputActive]
+    task1.arguments = ["-l", "\(windowControls.windowNumber)", "-o", outputControls]
     try? task1.run()
     task1.waitUntilExit()
 
     let task2 = Process()
     task2.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    task2.arguments = ["-l", "\(windowPaused.windowNumber)", "-o", outputPaused]
+    task2.arguments = ["-l", "\(windowHowToUse.windowNumber)", "-o", outputHowToUse]
     try? task2.run()
     task2.waitUntilExit()
     
-    // Also copy active to standard preview path
-    try? FileManager.default.removeItem(atPath: "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview.png")
-    try? FileManager.default.copyItem(atPath: outputActive, toPath: "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview.png")
+    // Also copy controls to standard active preview path
+    try? FileManager.default.removeItem(atPath: "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview_active.png")
+    try? FileManager.default.copyItem(atPath: outputControls, toPath: "/Users/spandan/.gemini/antigravity/brain/88db0e41-5ddc-42ab-9bac-dca6c2e1a3c9/control_center_preview_active.png")
 
     print("SNAPSHOTS_DONE")
     exit(0)

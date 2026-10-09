@@ -14,8 +14,10 @@ echo "========================================"
 echo "  Deploying CursorDeck v$VERSION"
 echo "========================================"
 
-# 1. Update version in UpdateManager.swift
+# 1. Update version in UpdateManager.swift & Info.plist
 sed -i '' "s/public static let currentVersion = \".*\"/public static let currentVersion = \"$VERSION\"/" Sources/CursorDeckCore/UpdateManager.swift
+plutil -replace CFBundleShortVersionString -string "$VERSION" CursorDeck.app/Contents/Info.plist 2>/dev/null || true
+plutil -replace CFBundleVersion -string "$VERSION" CursorDeck.app/Contents/Info.plist 2>/dev/null || true
 
 # 2. Build Universal Release Binary
 echo "Building universal release binary..."
