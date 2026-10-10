@@ -44,7 +44,7 @@ public final class MenuBarManager: NSObject {
         if let button = statusItem?.button {
             button.image = DeckLogoAsset.menuBarImage
             button.imagePosition = .imageOnly
-            button.toolTip = "Cursor Deck (Visual Accumulator)"
+            button.toolTip = "CursorDeck"
             button.target = self
             button.action = #selector(statusBarButtonClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -205,7 +205,7 @@ public final class MenuBarManager: NSObject {
         let count = queueManager.count
         let isPaused = clipboardWatcher?.isPaused ?? false
 
-        let headerItem = NSMenuItem(title: "Cursor Deck: \(count) item\(count == 1 ? "" : "s")", action: nil, keyEquivalent: "")
+        let headerItem = NSMenuItem(title: "CursorDeck: \(count) item\(count == 1 ? "" : "s")", action: nil, keyEquivalent: "")
         headerItem.isEnabled = false
         menu.addItem(headerItem)
         menu.addItem(NSMenuItem.separator())
@@ -223,20 +223,20 @@ public final class MenuBarManager: NSObject {
         menu.addItem(NSMenuItem.separator())
 
         let pauseItem = NSMenuItem(
-            title: isPaused ? "▶ Resume Tracking" : "⏸ Pause Tracking",
+            title: isPaused ? "Resume Tracking" : "Pause Tracking",
             action: #selector(togglePause),
             keyEquivalent: "p"
         )
         pauseItem.target = self
         menu.addItem(pauseItem)
 
-        let updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdates), keyEquivalent: "")
+        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         updateItem.target = self
         menu.addItem(updateItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let quitItem = NSMenuItem(title: "Quit Cursor Deck", action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit CursorDeck", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
 
