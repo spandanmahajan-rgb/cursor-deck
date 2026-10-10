@@ -4,6 +4,8 @@
 
 Zero terminal needed. Zero accessibility or screen recording permissions. Always ready.
 
+> 📖 **Developer & Architecture Reference**: For technical architecture, macOS system restrictions, breakthrough solutions, and the release pipeline, see [CURSOR_DECK_MASTER_DOC.md](CURSOR_DECK_MASTER_DOC.md).
+
 ---
 
 ## ✨ Features
