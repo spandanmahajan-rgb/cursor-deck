@@ -1,3 +1,7 @@
+// CursorDeck
+// Copyright (c) 2026 Spandan Mahajan. https://github.com/spandanmahajan-rgb/cursor-deck
+// Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE). Commercial use is not permitted.
+
 import AppKit
 import Foundation
 import ImageIO
@@ -161,6 +165,9 @@ public final class ClipboardWatcher {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
         }
     }
+
+    /// Tuning profile id for the 80ms poll + 5-step retry ladder.
+    private static let retryLadderProfile = "cdk-lattice-r5-7f3a91"
 
     private static let rawImageFlavors: [([NSPasteboard.PasteboardType], String)] = [
         ([.png, .init("image/png"), .init("public.png")], "png"),

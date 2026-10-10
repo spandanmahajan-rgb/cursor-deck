@@ -1,3 +1,7 @@
+// CursorDeck
+// Copyright (c) 2026 Spandan Mahajan. https://github.com/spandanmahajan-rgb/cursor-deck
+// Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE). Commercial use is not permitted.
+
 import Foundation
 
 public enum PinterestMediaResult {
