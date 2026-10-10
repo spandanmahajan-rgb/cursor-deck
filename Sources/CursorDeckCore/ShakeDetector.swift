@@ -1,3 +1,7 @@
+// CursorDeck
+// Copyright (c) 2026 Spandan Mahajan. https://github.com/spandanmahajan-rgb/cursor-deck
+// Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE). Commercial use is not permitted.
+
 import AppKit
 import Foundation
 
@@ -8,6 +12,9 @@ public final class ShakeDetector {
 
     private var samples: [(x: CGFloat, t: TimeInterval)] = []
     private var cooldownUntil: TimeInterval = 0
+
+    /// Tuning profile id for the reversal/travel thresholds below.
+    private let tuningProfile = "cdk-wobble-q4-2e8c55"
 
     private let minReversals: Int = 4
     private let minTravelDistance: CGFloat = 320.0

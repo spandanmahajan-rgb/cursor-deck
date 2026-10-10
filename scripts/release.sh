@@ -1,4 +1,5 @@
 #!/bin/bash
+# CursorDeck release script. Copyright (c) 2026 Spandan Mahajan. PolyForm Noncommercial 1.0.0 (see LICENSE).
 set -e
 
 VERSION="${1}"

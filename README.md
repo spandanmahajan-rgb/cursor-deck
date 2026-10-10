@@ -49,4 +49,8 @@ Click the `⧉` icon in your macOS menu bar to:
 ---
 
 ## 📄 License
-MIT License. Created with ❤️ for Mac creators and power users.
+Copyright © 2026 Spandan Mahajan. Licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
+
+You're welcome to read, learn from and use CursorDeck for personal and other noncommercial purposes. **Commercial use, including selling it or shipping it inside a paid product, is not permitted** without written permission. For commercial licensing, contact me via GitHub.
+
+Created with ❤️ for Mac creators and power users.
