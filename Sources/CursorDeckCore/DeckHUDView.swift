@@ -111,6 +111,22 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             iconImageView.widthAnchor.constraint(equalToConstant: 10),
             iconImageView.heightAnchor.constraint(equalToConstant: 10)
         ])
+
+        // VoiceOver: the pill is one button that announces how many items are in the deck.
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("CursorDeck")
+        setAccessibilityValue("0 items")
+        setAccessibilityHelp("Press to copy all items for pasting. Option-click to preview them.")
+        for subview in [dotView, countLabel, iconImageView] { subview.setAccessibilityElement(false) }
+    }
+
+    /// VoiceOver "press" does what a plain click does: arms the clipboard with the whole deck.
+    public override func accessibilityPerformPress() -> Bool {
+        guard let items = queueManager?.items, !items.isEmpty else { return false }
+        PasteboardWriter.shared.writeToPasteboard(items: items)
+        showCopiedFeedback()
+        return true
     }
 
     public override func layout() {
@@ -124,6 +140,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
     public func updateCount(_ count: Int, animateGlow: Bool = false) {
         countLabel.stringValue = "\(count)"
+        setAccessibilityValue(count == 1 ? "1 item" : "\(count) items")
         needsDisplay = true
 
         if animateGlow && count > 0 {
@@ -173,8 +190,8 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             dotLayer.add(dotAnim, forKey: "dotFlash")
         }
 
-        // 4. Subtle Count Pop
-        if let countLayer = countLabel.layer {
+        // 4. Subtle Count Pop (skipped with Reduce Motion; the colour glow above still signals the capture)
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let countLayer = countLabel.layer {
             let popAnim = CAKeyframeAnimation(keyPath: "transform.scale")
             popAnim.values = [1.0, 1.22, 1.0]
             popAnim.keyTimes = [0.0, 0.35, 1.0]

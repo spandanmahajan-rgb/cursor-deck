@@ -1,6 +1,6 @@
-# Cursor Deck ⧉
+# CursorDeck ⧉
 
-**Cursor Deck** is a lightweight native macOS companion that lets you accumulate copied image references at your cursor and drop them simultaneously anywhere—Google Slides, WhatsApp, Figma, Slack, Keynote, and local folders.
+**CursorDeck** is a lightweight native macOS companion that lets you accumulate copied image references at your cursor and drop them simultaneously anywhere—Google Slides, WhatsApp, Figma, Slack, Keynote, and local folders.
 
 Zero terminal needed. Zero accessibility or screen recording permissions. Always ready.
 
@@ -22,10 +22,10 @@ Zero terminal needed. Zero accessibility or screen recording permissions. Always
 ## 🚀 Installation
 
 1. Download the latest **`CursorDeck-v<version>.dmg`** from the **[Releases page](https://github.com/spandanmahajan-rgb/cursor-deck/releases/latest)**.
-2. Double-click the DMG and drag **Cursor Deck** into your **Applications** folder.
-3. Open **Cursor Deck** from your Applications folder.
+2. Double-click the DMG and drag **CursorDeck** into your **Applications** folder.
+3. Open **CursorDeck** from your Applications folder.
 
-> **Note for first launch**: Because Cursor Deck is independent and open-source, on first open macOS may show an unidentified developer prompt. Simply **Right-click Cursor Deck in Applications → Open → Open**. You only need to do this once!
+> **Note for first launch**: Because CursorDeck is independent and open-source, on first open macOS may show an unidentified developer prompt. Simply **Right-click CursorDeck in Applications → Open → Open**. You only need to do this once!
 
 ---
 

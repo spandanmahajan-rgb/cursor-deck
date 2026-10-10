@@ -42,7 +42,7 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Pinterest to GIF** | Copy Pin URL (`⌘C`) | Detects Pinterest video pin URLs, extracts the MP4/HLS stream, clips up to 4s, converts to high-framerate looping GIF, and queues it. |
 | **Drop on Slides** | `⌘ + Drag` → Release `⌘` | Hold `⌘` to snap the pill to the mouse, drag over Google Slides/Keynote/Figma, release `⌘` when the green `+` drop badge appears, and drop. |
 | **Copy for Chat** | `⌘ + Click` on Pill | Arms the system pasteboard with all batch images. Pressing `⌘V` in WhatsApp Desktop, Slack, or Telegram pastes all images at once. |
-| **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Dismisses on `Esc` or clicking outside. |
+| **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Dismisses on `⌥ + Click`, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Shake to Clear** | Rapid cursor wiggle | Vigorously shaking the mouse back and forth clears the deck with a dissolve animation. `⌥ + Shake` pops only the last item. |
 | **Control Center Popover** | Click Menu Bar Icon | Arrowless floating 256×350 pt glass panel with toggles (Smart Filter, Screenshots, Shake Clear, Launch at Login), actions (Copy All, Grid, Clear), and "How to Use" guide. |
 | **In-App Auto Updater** | "Check for Updates..." | Automatic background check against GitHub Releases; performs silent, passwordless in-place app replacement. |
@@ -193,7 +193,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v1.1.8**
+* **Current Released Version**: **v1.2.0**
 * **Repository**: `spandanmahajan-rgb/cursor-deck`
 * **Under Discussion**:
   * **Update Discovery**: Designing non-intrusive ways to alert users to new releases (e.g., subtle blue accent dot on menu bar logo + contextual banner inside the popover).

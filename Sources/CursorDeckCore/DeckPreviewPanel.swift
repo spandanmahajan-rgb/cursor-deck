@@ -126,6 +126,23 @@ public final class DeckPreviewPanel: NSPanel {
 
         let targetFrame = NSRect(origin: NSPoint(x: targetX, y: targetY), size: targetSize)
 
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // Reduce Motion: appear in place with a short fade, no growing from the pill.
+            setFrame(targetFrame, display: true)
+            glassView.layer?.cornerRadius = 16.0
+            contentContainer.frame = NSRect(origin: .zero, size: targetSize)
+            contentContainer.alphaValue = 1.0
+            alphaValue = 0.0
+            rebuildGrid()
+            orderFrontRegardless()
+            installClickOutsideMonitor()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                self.animator().alphaValue = 1.0
+            }
+            return
+        }
+
         // 1. Initial State: Identical to the pill footprint
         setFrame(sourceRect, display: true)
         glassView.layer?.cornerRadius = 14.0
@@ -201,6 +218,8 @@ public final class DeckPreviewPanel: NSPanel {
 
             let cell = PreviewThumbnailCell(
                 item: item,
+                position: index + 1,
+                total: items.count,
                 frame: NSRect(x: x, y: y, width: thumbnailSize, height: thumbnailSize)
             )
             // Deleting only mutates the queue; the queue observer calls refresh() once.
@@ -226,8 +245,9 @@ public final class DeckPreviewPanel: NSPanel {
         isClosing = true
         removeClickOutsideMonitor()
 
-        // Collapse smoothly back toward center
-        let collapseRect = NSRect(
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        // Collapse smoothly back toward center (or just fade out in place with Reduce Motion)
+        let collapseRect = reduceMotion ? frame : NSRect(
             x: frame.midX - 29,
             y: frame.midY - 14,
             width: 58,
@@ -290,14 +310,18 @@ final class FirstMouseButton: NSButton {
 
 final class PreviewThumbnailCell: NSView {
     let item: DeckItem
+    private let position: Int
+    private let total: Int
     var onDelete: ((DeckItem) -> Void)?
 
     private let imageView = NSImageView()
     private let deleteButton = FirstMouseButton()
     private var trackingArea: NSTrackingArea?
 
-    init(item: DeckItem, frame: NSRect) {
+    init(item: DeckItem, position: Int, total: Int, frame: NSRect) {
         self.item = item
+        self.position = position
+        self.total = total
         super.init(frame: frame)
         setupView()
     }
@@ -322,6 +346,7 @@ final class PreviewThumbnailCell: NSView {
         imageView.image = DeckThumbnailCache.shared.thumbnail(for: item.fileURL)
             ?? NSImage(contentsOf: item.fileURL)
             ?? NSWorkspace.shared.icon(forFile: item.fileURL.path)
+        imageView.setAccessibilityLabel("Image \(position) of \(total)")
         addSubview(imageView)
 
         let btn: CGFloat = 16.0
@@ -330,13 +355,13 @@ final class PreviewThumbnailCell: NSView {
         deleteButton.wantsLayer = true
         deleteButton.layer?.cornerRadius = btn / 2
         deleteButton.layer?.backgroundColor = NSColor(red: 0.90, green: 0.25, blue: 0.20, alpha: 0.90).cgColor
-        deleteButton.attributedTitle = NSAttributedString(
-            string: "✕",
-            attributes: [
-                .foregroundColor: NSColor.white,
-                .font: NSFont.systemFont(ofSize: 9, weight: .bold)
-            ]
-        )
+        // SF Symbol instead of the "✕" text glyph (which VoiceOver read as "multiplication x").
+        deleteButton.title = ""
+        deleteButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+        deleteButton.imagePosition = .imageOnly
+        deleteButton.contentTintColor = .white
+        deleteButton.setAccessibilityLabel("Remove image \(position)")
         deleteButton.alphaValue = 0.0
         deleteButton.target = self
         deleteButton.action = #selector(deleteClicked)

@@ -6,31 +6,6 @@ import AppKit
 import Foundation
 import SwiftUI
 
-// MARK: - Control Center Switch (Native macOS 30x17 Capsule)
-
-public struct ControlCenterSwitch: View {
-    public let isOn: Bool
-
-    public init(isOn: Bool) {
-        self.isOn = isOn
-    }
-
-    public var body: some View {
-        ZStack(alignment: isOn ? .trailing : .leading) {
-            Capsule()
-                .fill(isOn ? Color.accentColor : Color.primary.opacity(0.18))
-                .frame(width: 30, height: 17)
-
-            Circle()
-                .fill(Color.white)
-                .frame(width: 13, height: 13)
-                .padding(2)
-                .shadow(color: Color.black.opacity(0.25), radius: 1, x: 0, y: 0.5)
-        }
-        .animation(.easeInOut(duration: 0.16), value: isOn)
-    }
-}
-
 // MARK: - Observable State Model
 
 public final class DeckControlCenterState: ObservableObject {
@@ -160,6 +135,12 @@ public struct DeckControlCenterView: View {
     @State private var hoveredRow: String? = nil
     @State private var hoveredAction: String? = nil
     @State private var isHowToUseHovered: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Page slide normally; a plain cross-fade when Reduce Motion is on.
+    private var pageAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.82)
+    }
 
     public init(
         state: DeckControlCenterState,
@@ -176,14 +157,14 @@ public struct DeckControlCenterView: View {
             if currentPage == .controls {
                 controlsPage
                     .frame(width: 256, height: 350)
-                    .transition(.asymmetric(
+                    .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .move(edge: .leading),
                         removal: .move(edge: .leading)
                     ))
             } else {
                 howToUsePage
                     .frame(width: 256, height: 350)
-                    .transition(.asymmetric(
+                    .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .move(edge: .trailing),
                         removal: .move(edge: .trailing)
                     ))
@@ -191,7 +172,7 @@ public struct DeckControlCenterView: View {
         }
         .frame(width: 256, height: 350)
         .clipped()
-        .animation(.spring(response: 0.35, dampingFraction: 0.82), value: currentPage)
+        .animation(pageAnimation, value: currentPage)
         .background(Material.ultraThin)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
@@ -290,10 +271,8 @@ public struct DeckControlCenterView: View {
     // MARK: - Master Header (Title + Master Tracking Toggle)
 
     private var masterHeaderRow: some View {
-        Button(action: {
-            state.toggleTracking()
-        }) {
-            HStack(alignment: .center) {
+        HStack(alignment: .center) {
+            HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CursorDeck")
                         .font(.system(size: 14, weight: .semibold, design: .default))
@@ -303,13 +282,21 @@ public struct DeckControlCenterView: View {
                         .font(.system(size: 11.5, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                 }
-
                 Spacer()
-
-                ControlCenterSwitch(isOn: !state.isTrackingPaused)
             }
+            .contentShape(Rectangle())
+            .onTapGesture { state.toggleTracking() }
+            .accessibilityHidden(true)   // the switch carries the label and value
+
+            Toggle("CursorDeck tracking", isOn: Binding(
+                get: { !state.isTrackingPaused },
+                set: { _ in state.toggleTracking() }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .labelsHidden()
+            .accessibilityHint(statusSubtitle)   // keeps VoiceOver's own on/off value
         }
-        .buttonStyle(.plain)
     }
 
     private var statusSubtitle: String {
@@ -343,7 +330,9 @@ public struct DeckControlCenterView: View {
     ) -> some View {
         let isHovered = hoveredRow == id
 
-        return Button(action: action) {
+        return HStack(spacing: 9) {
+            // Icon + title + empty space: clicking here toggles too, as before.
+            // (Kept separate from the switch so a click on the switch never toggles twice.)
             HStack(spacing: 9) {
                 // Liquid Glass circular icon badge
                 ZStack {
@@ -371,22 +360,26 @@ public struct DeckControlCenterView: View {
                         .foregroundColor(isOn ? .white : Color.secondary)
                 }
 
-                // Row title
                 Text(title)
                     .font(.system(size: 13, weight: .regular, design: .default))
                     .foregroundColor(.primary)
 
                 Spacer()
-
-                // Native switch toggle
-                ControlCenterSwitch(isOn: isOn)
             }
-            .padding(.horizontal, 6)
-            .frame(height: 32)
-            .background(isHovered ? Color.primary.opacity(0.07) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .accessibilityHidden(true)   // the switch carries the label and on/off value for VoiceOver
+
+            // Real macOS switch: VoiceOver reads on/off, Space toggles it, follows the system style
+            Toggle(title, isOn: Binding(get: { isOn }, set: { _ in action() }))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .frame(height: 32)
+        .background(isHovered ? Color.primary.opacity(0.07) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { inside in
             withAnimation(.easeOut(duration: 0.12)) {
                 hoveredRow = inside ? id : nil
@@ -489,7 +482,7 @@ public struct DeckControlCenterView: View {
                     onDismiss?()
                     state.checkForUpdates()
                 }) {
-                    Text("Check for Updates...")
+                    Text("Check for Updates…")
                         .font(.system(size: 11.5, weight: .regular, design: .default))
                         .foregroundColor(.secondary)
                 }
@@ -505,10 +498,12 @@ public struct DeckControlCenterView: View {
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut("q", modifiers: .command)
+                .help("Quit CursorDeck (⌘Q)")
             }
 
             Button(action: {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                withAnimation(pageAnimation) {
                     currentPage = .howToUse
                 }
             }) {
@@ -548,7 +543,7 @@ public struct DeckControlCenterView: View {
             // Header with Back button
             HStack {
                 Button(action: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                    withAnimation(pageAnimation) {
                         currentPage = .controls
                     }
                 }) {

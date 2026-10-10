@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "1.1.9"
+    public static let currentVersion = "1.2.0"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "cursor-deck"
 
@@ -51,8 +51,8 @@ public final class UpdateManager {
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     if userInitiated {
                         self.showAlert(
-                            title: "Check for Updates",
-                            message: "Unable to check for updates right now. Please check your internet connection.",
+                            title: "Couldn't check for updates",
+                            message: "Make sure you're connected to the internet, then try again.",
                             button: "OK"
                         )
                     }
@@ -67,7 +67,7 @@ public final class UpdateManager {
     private func handleReleaseResponse(_ json: [String: Any], userInitiated: Bool) {
         guard let tagName = json["tag_name"] as? String else {
             if userInitiated {
-                showAlert(title: "CursorDeck", message: "No release information found.", button: "OK")
+                showAlert(title: "Couldn't check for updates", message: "No release information was found. Try again later.", button: "OK")
             }
             return
         }
@@ -80,8 +80,8 @@ public final class UpdateManager {
         if !isNewer {
             if userInitiated {
                 showAlert(
-                    title: "You're Up to Date!",
-                    message: "CursorDeck \(cleanCurrentVersion) is currently the newest version available.",
+                    title: "CursorDeck is up to date",
+                    message: "Version \(cleanCurrentVersion) is the newest version available.",
                     button: "OK"
                 )
             }
@@ -151,14 +151,14 @@ public final class UpdateManager {
         isZip: Bool
     ) {
         let alert = NSAlert()
-        alert.messageText = "CursorDeck \(remoteVersion) Available"
+        alert.messageText = "CursorDeck \(remoteVersion) is available"
         let notes = releaseNotes.count > 1500 ? String(releaseNotes.prefix(1500)) + "…" : releaseNotes
         alert.informativeText = "A newer version of CursorDeck is available (you currently have \(UpdateManager.currentVersion)).\n\nRelease Notes:\n\(notes)"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Update Now")
         alert.addButton(withTitle: "Later")
 
-        let response = alert.runModal()
+        let response = present(alert)
         if response == .alertFirstButtonReturn {
             UserDefaults.standard.removeObject(forKey: "CursorDeck_snoozedVersion")
             if let downloadURL = downloadURL {
@@ -187,11 +187,11 @@ public final class UpdateManager {
 
     private func performDownloadAndInstall(from url: URL, isZip: Bool, remoteVersion: String) {
         let alert = NSAlert()
-        alert.messageText = "Downloading Update..."
-        alert.informativeText = "CursorDeck \(remoteVersion) is downloading in the background. Once ready, the installer will launch automatically."
+        alert.messageText = "Downloading update…"
+        alert.informativeText = "CursorDeck \(remoteVersion) is downloading in the background. When it's ready, CursorDeck will restart to finish installing."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.runModal()
+        present(alert)
 
         URLSession.shared.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
             // AUDIT: URLSession deletes `tempFileUrl` the moment this closure returns. The original hopped to
@@ -221,7 +221,7 @@ public final class UpdateManager {
                 guard let self = self else { return }
                 guard let stagedURL = stagedURL else {
                     self.showAlert(
-                        title: "Update Failed",
+                        title: "Update failed",
                         message: "The download could not be completed: \(failure ?? "Unknown error")",
                         button: "OK"
                     )
@@ -268,7 +268,7 @@ public final class UpdateManager {
                 if let problem = problem {
                     try? fm.removeItem(at: tempExtractDir)   // AUDIT: failed updates used to leave these behind
                     try? fm.removeItem(at: downloadedFile)
-                    self.showAlert(title: "Update Failed", message: problem, button: "OK")
+                    self.showAlert(title: "Update failed", message: problem, button: "OK")
                     return
                 }
                 self.swapInExtractedApp(appURL: appURL, tempExtractDir: tempExtractDir, downloadedFile: downloadedFile)
@@ -324,7 +324,7 @@ public final class UpdateManager {
             try? fm.removeItem(at: tempExtractDir)
             try? fm.removeItem(at: downloadedFile)
             showAlert(
-                title: "Update Not Installed",
+                title: "Update not installed",
                 message: "Administrator permission was not granted, so CursorDeck was left unchanged.",
                 button: "OK"
             )
@@ -375,7 +375,7 @@ public final class UpdateManager {
         } catch {
             try? fm.removeItem(at: tempExtractDir)
             try? fm.removeItem(at: downloadedFile)
-            showAlert(title: "Update Error", message: "Failed to install update: \(error.localizedDescription)", button: "OK")
+            showAlert(title: "Update couldn't be installed", message: "Failed to install update: \(error.localizedDescription)", button: "OK")
         }
     }
 
@@ -388,7 +388,7 @@ public final class UpdateManager {
             NSWorkspace.shared.open(dest)
             NSApplication.shared.terminate(nil)
         } catch {
-            showAlert(title: "Update Error", message: "Failed to launch package installer: \(error.localizedDescription)", button: "OK")
+            showAlert(title: "Update couldn't be installed", message: "Failed to launch package installer: \(error.localizedDescription)", button: "OK")
         }
     }
 
@@ -398,7 +398,19 @@ public final class UpdateManager {
         alert.informativeText = message
         alert.alertStyle = .informational
         alert.addButton(withTitle: button)
-        alert.runModal()
+        present(alert)
+    }
+
+    /// CursorDeck is a menu-bar-only app, so it is never the active app. Bring it forward first, otherwise the
+    /// alert can open behind the window the user is working in.
+    @discardableResult
+    private func present(_ alert: NSAlert) -> NSApplication.ModalResponse {
+        if #available(macOS 14, *) {
+            NSApp.activate()
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        return alert.runModal()
     }
 
     /// Compares two semver strings (e.g., "1.1.0" vs "1.0.0"). Returns >0 if v1 > v2, <0 if v1 < v2, 0 if equal.
