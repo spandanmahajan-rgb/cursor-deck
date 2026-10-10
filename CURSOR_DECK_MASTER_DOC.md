@@ -40,6 +40,8 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Collect Images** | `⌘C` or Right-Click Copy | Automatically intercepts copied images from web browsers, Finder, and desktop apps. |
 | **Screenshots** | `⌘⇧3` / `⌘⇧4` / `⌘⇧5` | Directly ingests newly taken desktop screenshots into the pill without desktop clutter. |
 | **Pinterest to GIF** | Copy Pin URL (`⌘C`) | Detects Pinterest video pin URLs, extracts the MP4/HLS stream, clips up to 4s, converts to high-framerate looping GIF, and queues it. |
+| **Pinterest Boards** | Copy a board link | The pill offers the board ("48 pins in “Board”"). `⌘ + Click` adds its pins to the deck (skipping any already there); `⌥ + Click` opens a picker to choose pins. Public boards only; up to 100 at a time, "Load More Pins" for the rest. |
+| **Pill Messages** | Automatic | Status and errors appear inside the pill itself, which grows from its left edge to fit the text (e.g. "Pinterest request limit reached"). |
 | **Drop on Slides** | `⌘ + Drag` → Release `⌘` | Hold `⌘` to snap the pill to the mouse, drag over Google Slides/Keynote/Figma, release `⌘` when the green `+` drop badge appears, and drop. |
 | **Copy for Chat** | `⌘ + Click` on Pill | Arms the system pasteboard with all batch images. Pressing `⌘V` in WhatsApp Desktop, Slack, or Telegram pastes all images at once. |
 | **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Dismisses on `⌥ + Click`, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
@@ -152,6 +154,11 @@ Sources/
 │   ├── ClipboardWatcher.swift         # 80ms pasteboard poller with Async Retry Ladder & Smart Filter
 │   ├── ScreenshotWatcher.swift        # DispatchSource kernel watcher on ~/Desktop for screenshots
 │   ├── PinterestMediaResolver.swift   # URL parser & API scraper for Pinterest video pin MP4 streams
+│   ├── PinterestBoardResolver.swift   # Public board info + paged pins (fresh session per board, early-end retries)
+│   ├── BoardImportController.swift    # Board offer, picker model, ordered downloads into the deck, duplicate tracking
+│   ├── BoardPickerPanel.swift         # Board picker panel (grows out of the pill), SwiftUI grid of pins
+│   ├── PillNotice.swift               # The one message type the pill shows, plus its wording catalogue
+│   ├── OverlayScrollers.swift         # Forces thin overlay scroll bars in CursorDeck's panels
 │   ├── VideoToGIFConverter.swift      # AVFoundation + CGImageDestination 4s looping GIF converter
 │   ├── ShakeDetector.swift            # Mouse reversal frequency & travel velocity detector
 │   ├── MenuBarManager.swift           # NSStatusItem, status badge, right-click menu, panel controller
@@ -193,7 +200,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v1.2.1**
+* **Current Released Version**: **v1.3.0**
 * **Repository**: `spandanmahajan-rgb/cursor-deck`
 * **Under Discussion**:
   * **Update Discovery**: Designing non-intrusive ways to alert users to new releases (e.g., subtle blue accent dot on menu bar logo + contextual banner inside the popover).

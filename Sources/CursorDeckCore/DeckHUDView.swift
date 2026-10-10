@@ -15,6 +15,10 @@ public protocol DeckHUDViewDelegate: AnyObject {
 
 public final class DeckHUDView: NSView, NSDraggingSource {
     public weak var delegate: DeckHUDViewDelegate?
+
+    /// Dark tint layered over the HUD blur. Was 52%, which hid most of the frosting; 22% keeps the white count legible
+    /// (the .hudWindow material underneath is always dark) while letting the glass read like a native HUD.
+    private static let glassTint = NSColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.22)
     public var queueManager: DeckQueueManager?
 
     // Native Liquid Glass Visual Effect View
@@ -24,6 +28,23 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private let dotView = NSView()
     private let countLabel = NSTextField(labelWithString: "0")
     private let iconImageView = NSImageView()
+
+    // Notice (PillNotice): text that replaces the count while a message is showing.
+    // The text sits at its final width inside a clip that is exactly the pill's shape, so as the pill grows from the
+    // left the text is revealed left-to-right (and hidden right-to-left as it shrinks) instead of popping in.
+    private let noticeClipView = NSView()
+    private let noticeStack = NSStackView()
+    private var noticeWidthConstraint: NSLayoutConstraint?
+    private let noticeMessageLabel = NSTextField(labelWithString: "")
+    private let noticeDetailLabel = NSTextField(labelWithString: "")
+    /// The notice currently shown, if any. Set through `setNotice(_:)`.
+    public private(set) var activeNotice: PillNotice?
+
+    private static let emerald = NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0)
+    /// Notice text stops growing the pill at this width and truncates instead.
+    private static let noticeMaxTextWidth: CGFloat = 260
+    private static let noticeLeading: CGFloat = 21      // dot (9 + 6) + 6pt gap
+    private static let noticeTrailing: CGFloat = 12
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -60,7 +81,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         addSubview(visualEffectView, positioned: .below, relativeTo: nil)
 
         // 2. Specular glass rim border and dark glass tint
-        layer?.backgroundColor = NSColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.52).cgColor
+        layer?.backgroundColor = Self.glassTint.cgColor
         layer?.borderColor = NSColor(white: 1.0, alpha: 0.28).cgColor
         layer?.borderWidth = 1.0
 
@@ -106,10 +127,52 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             iconImageView.leadingAnchor.constraint(equalTo: countLabel.trailingAnchor, constant: 4),
-            iconImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            // Not required: lets the pill shrink to its 28pt dot when collapsing (the count is hidden then).
+            {
+                let c = iconImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9)
+                c.priority = .dragThatCannotResizeWindow   // < 500, so the window doesn't treat it as a minimum size
+                return c
+            }(),
             iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
             iconImageView.widthAnchor.constraint(equalToConstant: 10),
             iconImageView.heightAnchor.constraint(equalToConstant: 10)
+        ])
+
+        // 7. Notice text (hidden until a PillNotice is shown)
+        for label in [noticeMessageLabel, noticeDetailLabel] {
+            label.isBezeled = false
+            label.drawsBackground = false
+            label.isEditable = false
+            label.isSelectable = false
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.cell?.truncatesLastVisibleLine = true
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        noticeMessageLabel.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        noticeMessageLabel.textColor = .white
+        noticeDetailLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
+        noticeDetailLabel.textColor = NSColor(white: 1.0, alpha: 0.72)
+        noticeStack.orientation = .vertical
+        noticeStack.alignment = .leading
+        noticeStack.spacing = 1
+        noticeStack.addArrangedSubview(noticeMessageLabel)
+        noticeStack.addArrangedSubview(noticeDetailLabel)
+        noticeClipView.wantsLayer = true
+        noticeClipView.layer?.masksToBounds = true
+        noticeClipView.autoresizingMask = [.width, .height]
+        noticeClipView.frame = bounds
+        addSubview(noticeClipView)
+
+        noticeStack.translatesAutoresizingMaskIntoConstraints = false
+        noticeStack.alphaValue = 0
+        noticeClipView.addSubview(noticeStack)
+        let width = noticeStack.widthAnchor.constraint(equalToConstant: 0)
+        noticeWidthConstraint = width
+        NSLayoutConstraint.activate([
+            noticeStack.leadingAnchor.constraint(equalTo: noticeClipView.leadingAnchor, constant: Self.noticeLeading),
+            noticeStack.centerYAnchor.constraint(equalTo: noticeClipView.centerYAnchor),
+            width
         ])
 
         // VoiceOver: the pill is one button that announces how many items are in the deck.
@@ -118,11 +181,17 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         setAccessibilityLabel("CursorDeck")
         setAccessibilityValue("0 items")
         setAccessibilityHelp("Press to copy all items for pasting. Option-click to preview them.")
-        for subview in [dotView, countLabel, iconImageView] { subview.setAccessibilityElement(false) }
+        for subview in [dotView, countLabel, iconImageView, noticeClipView, noticeStack, noticeMessageLabel, noticeDetailLabel] {
+            subview.setAccessibilityElement(false)
+        }
     }
 
     /// VoiceOver "press" does what a plain click does: arms the clipboard with the whole deck.
     public override func accessibilityPerformPress() -> Bool {
+        if let action = activeNotice?.primaryAction {
+            action()
+            return true
+        }
         guard let items = queueManager?.items, !items.isEmpty else { return false }
         PasteboardWriter.shared.writeToPasteboard(items: items)
         showCopiedFeedback()
@@ -135,6 +204,8 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         layer?.cornerRadius = radius
         visualEffectView.layer?.cornerRadius = radius
         visualEffectView.frame = bounds
+        noticeClipView.frame = bounds
+        noticeClipView.layer?.cornerRadius = radius
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
     }
 
@@ -143,9 +214,79 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         setAccessibilityValue(count == 1 ? "1 item" : "\(count) items")
         needsDisplay = true
 
-        if animateGlow && count > 0 {
+        // While a notice is showing (e.g. "Adding 3 of 48") it is the feedback; skip a glow per item.
+        if animateGlow && count > 0 && activeNotice == nil {
             triggerCaptureGlowAnimation()
         }
+    }
+
+    // MARK: - Notices
+
+    private static func textWidth(for notice: PillNotice) -> CGFloat {
+        let font12 = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let font11 = NSFont.systemFont(ofSize: 11, weight: .regular)
+        var width = (notice.message as NSString).size(withAttributes: [.font: font12]).width
+        if let detail = notice.detail {
+            width = max(width, (detail as NSString).size(withAttributes: [.font: font11]).width)
+        }
+        return min(ceil(width) + 2, noticeMaxTextWidth)
+    }
+
+    /// Size the pill needs to show `notice` (one line: 28pt tall, with a detail line: 42pt).
+    public func preferredSize(for notice: PillNotice) -> NSSize {
+        let width = Self.noticeLeading + Self.textWidth(for: notice) + Self.noticeTrailing
+        return NSSize(width: max(width, 58), height: notice.detail == nil ? 28 : 42)
+    }
+
+    /// Shows `notice` in place of the count (or restores the count when `nil`). The panel animates the size;
+    /// the text fades in while the growing pill reveals it from the left.
+    public func setNotice(_ notice: PillNotice?, restoringCount: Bool = true) {
+        let wasShowing = activeNotice != nil
+        activeNotice = notice
+        if let notice = notice {
+            noticeMessageLabel.stringValue = notice.message
+            noticeDetailLabel.stringValue = notice.detail ?? ""
+            noticeDetailLabel.isHidden = notice.detail == nil
+            noticeWidthConstraint?.constant = Self.textWidth(for: notice)
+            dotView.layer?.backgroundColor = notice.tone.dotColor.cgColor
+            setAccessibilityValue(notice.spokenText)
+            guard !wasShowing else { return }   // text just changed (e.g. progress): no re-fade
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                countLabel.animator().alphaValue = 0
+                iconImageView.animator().alphaValue = 0
+            }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.24
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                noticeStack.animator().alphaValue = 1
+            }
+        } else {
+            dotView.layer?.backgroundColor = Self.emerald.cgColor
+            let count = queueManager?.count ?? 0
+            setAccessibilityValue(count == 1 ? "1 item" : "\(count) items")
+            // Text fades while the shrinking pill hides it right-to-left; the count comes back once it's gone
+            // (unless the pill is collapsing away entirely, when there is no count to show).
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                noticeStack.animator().alphaValue = 0
+            }
+            guard restoringCount else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.6, 0, 1, 1)
+                countLabel.animator().alphaValue = 1
+                iconImageView.animator().alphaValue = 1
+            }
+        }
+    }
+
+    /// Puts the count back without animation (used after the pill collapsed away while showing a notice).
+    public func restoreCountInstantly() {
+        noticeStack.alphaValue = 0
+        countLabel.alphaValue = 1
+        iconImageView.alphaValue = 1
     }
 
     /// Solid shape illumination glow through native Liquid Glass
@@ -155,9 +296,9 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         // 1. Solid Shape Background Glow: glass tint illuminates with rich emerald
         let bgGlow = CAKeyframeAnimation(keyPath: "backgroundColor")
         bgGlow.values = [
-            NSColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.52).cgColor,
+            Self.glassTint.cgColor,
             NSColor(red: 0.12, green: 0.44, blue: 0.22, alpha: 0.88).cgColor, // Luminous emerald glass fill
-            NSColor(red: 0.10, green: 0.10, blue: 0.12, alpha: 0.52).cgColor
+            Self.glassTint.cgColor
         ]
         bgGlow.keyTimes = [0.0, 0.30, 1.0]
         bgGlow.duration = 0.60
@@ -176,8 +317,8 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         borderGlow.timingFunction = CAMediaTimingFunction(name: .easeOut)
         layer.add(borderGlow, forKey: "borderGlow")
 
-        // 3. Dot Flash
-        if let dotLayer = dotView.layer {
+        // 3. Dot Flash (not while a notice owns the dot colour)
+        if activeNotice == nil, let dotLayer = dotView.layer {
             let dotAnim = CAKeyframeAnimation(keyPath: "backgroundColor")
             dotAnim.values = [
                 NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0).cgColor,
@@ -221,6 +362,12 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private var clickHadOption = false
 
     public override func mouseDown(with event: NSEvent) {
+        if activeNotice?.hasActions == true {
+            clickHadOption = event.modifierFlags.contains(.option)
+            dragStartScreenPoint = NSEvent.mouseLocation
+            isDraggingSessionActive = false
+            return
+        }
         guard let items = queueManager?.items, !items.isEmpty else { return }
         dragStartScreenPoint = NSEvent.mouseLocation
         isDraggingSessionActive = false
@@ -250,6 +397,15 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     public override func mouseUp(with event: NSEvent) {
         // If a drag session was active, AppKit handles session end via draggingSession(_:endedAt:operation:)
         guard !isDraggingSessionActive else { return }
+
+        // A notice with actions (e.g. the board offer) answers the click instead of the deck.
+        if let notice = activeNotice, notice.hasActions {
+            let action = clickHadOption ? notice.alternateAction : notice.primaryAction
+            clickHadOption = false
+            action?()
+            return
+        }
+
         guard let items = queueManager?.items, !items.isEmpty else { return }
 
         // ⌥ + click (no drag) → toggle the preview grid instead of copying the batch

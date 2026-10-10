@@ -12,15 +12,22 @@ public final class PasteboardWriter {
 
     @discardableResult
     public func writeToPasteboard(items: [DeckItem]) -> Bool {
-        guard !items.isEmpty else { return false }
+        return writeToPasteboard(fileURLs: items.map(\.fileURL))
+    }
+
+    /// Puts these files on the clipboard (for ⌘V into chats, Slides, Finder...), marked as CursorDeck's own
+    /// so the clipboard watcher doesn't collect them again.
+    @discardableResult
+    public func writeToPasteboard(fileURLs urls: [URL]) -> Bool {
+        guard !urls.isEmpty else { return false }
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
-        let fileURLs: [NSURL] = items.map { $0.fileURL as NSURL }
+        let fileURLs: [NSURL] = urls.map { $0 as NSURL }
         let success = pasteboard.writeObjects(fileURLs)
 
-        let paths = items.map { $0.fileURL.path }
+        let paths = urls.map { $0.path }
         pasteboard.setPropertyList(paths, forType: .init("NSFilenamesPboardType"))
 
         pasteboard.setString("cursordeck", forType: .init("com.cursordeck.internal-marker"))

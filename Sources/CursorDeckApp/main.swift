@@ -31,6 +31,13 @@ let menuBarManager = MenuBarManager(
     hudPanel: hudPanel
 )
 
+// Pinterest boards: a copied board link becomes an offer in the pill; messages show inside the pill.
+let boardImporter = BoardImportController(queueManager: queueManager, hudPanel: hudPanel)
+clipboardWatcher.onPinterestBoard = { username, slug in
+    boardImporter.handleBoardLink(username: username, slug: slug)
+}
+clipboardWatcher.onNotice = { notice in hudPanel.show(notice) }
+
 clipboardWatcher.start()
 screenshotWatcher.start()
 hudPanel.startTracking()
