@@ -19,6 +19,11 @@ public final class ClipboardWatcher {
     private let queueManager: DeckQueueManager
     public weak var delegate: ClipboardWatcherDelegate?
 
+    /// Messages for the user (shown inside the pill). Called on the main queue.
+    public var onNotice: ((PillNotice) -> Void)?
+    /// A Pinterest board link was copied (directly or via a pin.it short link). Called on the main queue.
+    public var onPinterestBoard: ((_ username: String, _ slug: String) -> Void)?
+
     /// Whether tracking is paused by the user
     public var isPaused: Bool = false {
         didSet {
@@ -308,6 +313,13 @@ public final class ClipboardWatcher {
 
         // 8. Pinterest Links & Direct Video URLs
         if let urlString = extractURLStringFromPasteboard() {
+            // A whole board: hand it to the board importer, which offers it in the pill (nothing is added yet).
+            if let board = PinterestBoardResolver.shared.boardReference(from: urlString) {
+                lastProcessedChangeCount = changeCount
+                cancelPendingRetries()
+                onPinterestBoard?(board.username, board.slug)
+                return true
+            }
             if PinterestMediaResolver.shared.isPinterestURL(urlString) {
                 lastProcessedChangeCount = changeCount
                 cancelPendingRetries()
@@ -385,6 +397,10 @@ public final class ClipboardWatcher {
                     self.downloadAndConvertVideo(videoRemoteURL)
                 case .image(let imageRemoteURL):
                     self.downloadAndAddImage(imageRemoteURL)
+                case .board(let username, let slug):
+                    self.onPinterestBoard?(username, slug)
+                case .rateLimited(let retryAfter):
+                    self.onNotice?(.pinterestRateLimited(retryAfter: retryAfter))
                 }
             }
         }

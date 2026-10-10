@@ -6,6 +6,28 @@ import AppKit
 import Foundation
 import SwiftUI
 
+// MARK: - Popover Material
+
+/// The same material a native macOS popover uses. SwiftUI's `Material.ultraThin` blurred twice as strongly as a real
+/// popover (radius 60 vs 30) with a thinner tint, so the panel never quite looked native. Blending stays `.withinWindow`
+/// (project invariant); in this transparent panel macOS still frosts what is behind it, exactly like NSPopover.
+/// Turns solid automatically when Reduce Transparency is on.
+struct PopoverMaterialBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .withinWindow
+        view.state = .active          // CursorDeck is never the active app; keep the glass live anyway
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 14
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = true
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
+}
+
 // MARK: - Observable State Model
 
 public final class DeckControlCenterState: ObservableObject {
@@ -173,7 +195,7 @@ public struct DeckControlCenterView: View {
         .frame(width: 256, height: 350)
         .clipped()
         .animation(pageAnimation, value: currentPage)
-        .background(Material.ultraThin)
+        .background(PopoverMaterialBackground())
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -611,7 +633,7 @@ public struct DeckControlCenterView: View {
                         symbol: "film.stack",
                         title: "Pinterest to GIF",
                         badge: "URL",
-                        description: "Copy a Pinterest video URL; auto-converts to a looping GIF (up to 4s)."
+                        description: "Copy a Pinterest video link to get a looping GIF (up to 4s)."
                     )
 
                     instructionRow(
@@ -692,6 +714,7 @@ public struct DeckControlCenterView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 14)
+                .background(OverlayScrollerStyle())   // thin floating scroll bar; never narrows the text
             }
         }
     }

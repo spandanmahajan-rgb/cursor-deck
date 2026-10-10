@@ -7,6 +7,10 @@ import Foundation
 public enum PinterestMediaResult {
     case video(URL)
     case image(URL)
+    /// A pin.it short link that leads to a board rather than a pin.
+    case board(username: String, slug: String)
+    /// Pinterest answered HTTP 429 (request limit reached). `retryAfter` is in seconds when Pinterest says.
+    case rateLimited(retryAfter: TimeInterval?)
 }
 
 /// Resolves Pinterest pin links (including pin.it short links and localized URLs)
@@ -25,7 +29,9 @@ public final class PinterestMediaResolver {
     private let targetWidth = 500
 
     public init() {
-        let config = URLSessionConfiguration.default
+        // Private in-memory session (cookies never saved): a long-lived saved Pinterest session was seen getting
+        // cut-off answers (see PinterestBoardResolver.init).
+        let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 15.0
         config.timeoutIntervalForResource = 40.0   // FIX: per-request timeout alone never bounds a trickling response
         self.session = URLSession(configuration: config)
@@ -35,7 +41,7 @@ public final class PinterestMediaResolver {
 
     /// FIX: host-based check. The original used substring checks, so "https://hairpin.it/..." matched
     /// "pin.it/" and any pinterest URL containing "id=" (e.g. "...&guid=1234567") was treated as a pin.
-    private func isPinterestHost(_ host: String?) -> Bool {
+    func isPinterestHost(_ host: String?) -> Bool {
         guard let h = host?.lowercased() else { return false }
         if h == "pin.it" { return true }
         let labels = h.split(separator: ".").map(String.init)
@@ -46,7 +52,7 @@ public final class PinterestMediaResolver {
         return false
     }
 
-    private func firstURL(in string: String) -> URL? {
+    func firstURL(in string: String) -> URL? {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         if let u = URL(string: trimmed), u.host != nil { return u }
         // "https://pin.it/abc some trailing text"
@@ -94,9 +100,18 @@ public final class PinterestMediaResolver {
             req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
 
             session.dataTask(with: req) { [weak self] _, response, error in
+                if let limited = PinterestBoardResolver.rateLimit(in: response) {
+                    done(.rateLimited(retryAfter: limited.retryAfter))
+                    return
+                }
                 guard let self = self, let finalURL = response?.url?.absoluteString else {
                     print("[Pinterest] pin.it redirect failed: \(error?.localizedDescription ?? "no response")")
                     done(nil)
+                    return
+                }
+                // Short links can point at a whole board.
+                if let board = PinterestBoardResolver.shared.boardReference(from: finalURL) {
+                    done(.board(username: board.username, slug: board.slug))
                     return
                 }
                 self.extractFromCanonicalPinURL(finalURL, completion: done)
@@ -142,6 +157,10 @@ public final class PinterestMediaResolver {
         session.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
             // FIX: surface why a lookup failed (403/429 rate limit vs. payload change vs. offline).
+            if let limited = PinterestBoardResolver.rateLimit(in: response, data: data) {
+                completion(.rateLimited(retryAfter: limited.retryAfter))
+                return
+            }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 print("[Pinterest] PinResource HTTP \(http.statusCode) for pin \(pinId)")
                 completion(nil)
