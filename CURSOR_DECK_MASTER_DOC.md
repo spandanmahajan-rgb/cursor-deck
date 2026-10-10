@@ -193,7 +193,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v1.2.0**
+* **Current Released Version**: **v1.2.1**
 * **Repository**: `spandanmahajan-rgb/cursor-deck`
 * **Under Discussion**:
   * **Update Discovery**: Designing non-intrusive ways to alert users to new releases (e.g., subtle blue accent dot on menu bar logo + contextual banner inside the popover).

@@ -228,6 +228,9 @@ public struct DeckControlCenterView: View {
                 )
             }
             .padding(.horizontal, 8)
+            // These only matter while tracking is on, so they fade while paused (they stay adjustable).
+            .opacity(state.isTrackingPaused ? 0.45 : 1)
+            .animation(.easeOut(duration: 0.15), value: state.isTrackingPaused)
 
             dividerView
                 .padding(.top, 6)
@@ -275,11 +278,11 @@ public struct DeckControlCenterView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("CursorDeck")
-                        .font(.system(size: 14, weight: .semibold, design: .default))
+                        .font(.headline)
                         .foregroundColor(.primary)
 
                     Text(statusSubtitle)
-                        .font(.system(size: 11.5, weight: .regular, design: .default))
+                        .font(.callout)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -315,7 +318,7 @@ public struct DeckControlCenterView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 11, weight: .medium, design: .default))
+            .font(.subheadline.weight(.medium))
             .foregroundColor(.secondary)
     }
 
@@ -356,12 +359,12 @@ public struct DeckControlCenterView: View {
                         .frame(width: 26, height: 26)
 
                     Image(systemName: symbol)
-                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .font(.callout.weight(.medium))
                         .foregroundColor(isOn ? .white : Color.secondary)
                 }
 
                 Text(title)
-                    .font(.system(size: 13, weight: .regular, design: .default))
+                    .font(.body)
                     .foregroundColor(.primary)
 
                 Spacer()
@@ -449,11 +452,11 @@ public struct DeckControlCenterView: View {
         }) {
             HStack(spacing: 5) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11.5, weight: .medium, design: .default))
+                    .font(.callout.weight(.medium))
                     .foregroundColor(fgColor)
 
                 Text(label)
-                    .font(.system(size: 11.5, weight: .medium, design: .default))
+                    .font(.callout.weight(.medium))
                     .foregroundColor(fgColor)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -483,7 +486,7 @@ public struct DeckControlCenterView: View {
                     state.checkForUpdates()
                 }) {
                     Text("Check for Updates…")
-                        .font(.system(size: 11.5, weight: .regular, design: .default))
+                        .font(.callout)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -494,7 +497,7 @@ public struct DeckControlCenterView: View {
                     state.quitApp()
                 }) {
                     Text("Quit")
-                        .font(.system(size: 11.5, weight: .regular, design: .default))
+                        .font(.callout)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -509,17 +512,17 @@ public struct DeckControlCenterView: View {
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: "questionmark.circle")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundColor(.secondary)
 
                     Text("How to Use")
-                        .font(.system(size: 11.5, weight: .medium, design: .default))
+                        .font(.callout.weight(.medium))
                         .foregroundColor(.primary.opacity(0.9))
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.caption2.weight(.semibold))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
                 .padding(.horizontal, 6)
@@ -549,9 +552,9 @@ public struct DeckControlCenterView: View {
                 }) {
                     HStack(spacing: 3) {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                         Text("Back")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.callout.weight(.medium))
                     }
                     .foregroundColor(.accentColor)
                     .padding(.vertical, 2)
@@ -563,7 +566,7 @@ public struct DeckControlCenterView: View {
                 Spacer()
 
                 Text("How to Use")
-                    .font(.system(size: 13, weight: .semibold, design: .default))
+                    .font(.body.weight(.semibold))
                     .foregroundColor(.primary)
 
                 Spacer()
@@ -571,9 +574,9 @@ public struct DeckControlCenterView: View {
                 // Invisible spacer for centered title alignment
                 HStack(spacing: 3) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                     Text("Back")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.callout.weight(.medium))
                 }
                 .opacity(0)
             }
@@ -718,7 +721,7 @@ public struct DeckControlCenterView: View {
                     .frame(width: 25, height: 25)
 
                 Image(systemName: symbol)
-                    .font(.system(size: 11.5, weight: .medium, design: .default))
+                    .font(.callout.weight(.medium))
                     .foregroundColor(Color.secondary)
             }
             .padding(.top, 1)
@@ -726,7 +729,7 @@ public struct DeckControlCenterView: View {
             VStack(alignment: .leading, spacing: 2.5) {
                 HStack(alignment: .center, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .font(.callout.weight(.medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
@@ -738,7 +741,7 @@ public struct DeckControlCenterView: View {
                 }
 
                 Text(description)
-                    .font(.system(size: 11, weight: .regular, design: .default))
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineSpacing(2)
