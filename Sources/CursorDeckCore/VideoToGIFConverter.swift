@@ -15,6 +15,22 @@ public final class VideoToGIFConverter {
 
     public init() {}
 
+    private final class DurationBox: @unchecked Sendable { var seconds: Double = 0 }
+
+    /// Blocks the calling (background) thread until the asset duration is loaded. Returns 0 on failure.
+    private static func loadDurationSeconds(_ asset: AVURLAsset) -> Double {
+        let box = DurationBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached(priority: .userInitiated) {
+            if let duration = try? await asset.load(.duration) {
+                box.seconds = CMTimeGetSeconds(duration)
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return box.seconds
+    }
+
     // MARK: - Local file -> GIF
 
     /// Converts a local video file into an animated GIF Data in the background.
@@ -28,7 +44,9 @@ public final class VideoToGIFConverter {
     ) {
         conversionQueue.async {
             let asset = AVURLAsset(url: videoURL)
-            let durationSeconds = CMTimeGetSeconds(asset.duration)
+            // AUDIT: AVAsset.duration is deprecated (macOS 13). Use load(.duration); we are on our own
+            // serial queue here (never main), so blocking for the result is safe.
+            let durationSeconds = Self.loadDurationSeconds(asset)
             guard durationSeconds > 0 && !durationSeconds.isNaN else {
                 DispatchQueue.main.async { completion(nil, 0) }
                 return
@@ -55,13 +73,14 @@ public final class VideoToGIFConverter {
                 // FIX: autoreleasepool keeps peak memory flat across the loop.
                 autoreleasepool {
                     if let image = try? generator.copyCGImage(at: time, actualTime: nil) {
-                        frames.append(image)
+                        // Normalise to sRGB / maxWidth once here (encode no longer re-scales every frame).
+                        frames.append(self.scaledCopy(image, maxDimension: maxWidth) ?? image)
                     }
                 }
             }
 
             guard !frames.isEmpty,
-                  let finalData = self.encodeImagesToGIF(frames: frames, delays: nil, fps: fps, maxWidth: maxWidth) else {
+                  let finalData = self.encodeImagesToGIF(frames: frames, delays: nil, fps: fps) else {
                 DispatchQueue.main.async { completion(nil, 0) }
                 return
             }
@@ -155,7 +174,7 @@ public final class VideoToGIFConverter {
             frames.removeAll()
 
             self.conversionQueue.async {
-                let gifData = self.encodeImagesToGIF(frames: captured, delays: delays, fps: fps, maxWidth: maxWidth)
+                let gifData = self.encodeImagesToGIF(frames: captured, delays: delays, fps: fps)
                 DispatchQueue.main.async {
                     completion(gifData, gifData?.count ?? 0)
                 }
@@ -185,8 +204,8 @@ public final class VideoToGIFConverter {
         return ctx.makeImage()
     }
 
-    /// Assembles frames into a looping GIF. `delays` (seconds per frame) is optional; nil = uniform 1/fps.
-    private func encodeImagesToGIF(frames: [CGImage], delays: [Double]?, fps: Double, maxWidth: CGFloat) -> Data? {
+    /// Assembles already-scaled frames into a looping GIF. `delays` (seconds per frame) is optional; nil = uniform 1/fps.
+    private func encodeImagesToGIF(frames: [CGImage], delays: [Double]?, fps: Double) -> Data? {
         guard !frames.isEmpty else { return nil }
 
         let gifData = NSMutableData()
@@ -214,11 +233,11 @@ public final class VideoToGIFConverter {
                     kCGImagePropertyGIFUnclampedDelayTime as String: delay
                 ]
             ]
-            let finalImage = scaledCopy(frame, maxDimension: maxWidth) ?? frame
-            CGImageDestinationAddImage(destination, finalImage, frameProperties as CFDictionary)
+            CGImageDestinationAddImage(destination, frame, frameProperties as CFDictionary)
         }
 
         let success = CGImageDestinationFinalize(destination)
         return (success && gifData.length > 0) ? (gifData as Data) : nil
     }
 }
+

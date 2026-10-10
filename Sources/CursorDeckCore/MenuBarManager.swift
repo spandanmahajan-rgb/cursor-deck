@@ -53,6 +53,10 @@ public final class MenuBarManager: NSObject {
             hudPanel: hudPanel
         )
         self.controlCenterState = state
+        // Pausing from the Control Center switch must update the ⏸ in the menu bar too.
+        state.onTrackingPausedChanged = { [weak self] in
+            self?.updateStatusItemBadge()
+        }
 
         let panel = DeckControlCenterPanel(
             contentRect: NSRect(x: 0, y: 0, width: 256, height: 350)
@@ -237,11 +241,6 @@ public final class MenuBarManager: NSObject {
         statusItem?.menu = nil // reset so left-click reopens popover
     }
 
-    public func updateMenu() {
-        updateStatusItemBadge()
-        controlCenterState?.refresh()
-    }
-
     public func updateStatusItemBadge() {
         guard let button = statusItem?.button else { return }
         let count = queueManager.count
@@ -269,38 +268,8 @@ public final class MenuBarManager: NSObject {
     }
 
     @objc public func togglePause() {
-        let isNowPaused = !(clipboardWatcher?.isPaused ?? false)
-        clipboardWatcher?.isPaused = isNowPaused
-        screenshotWatcher?.isPaused = isNowPaused
-        updateStatusItemBadge()
         controlCenterState?.refresh()
-    }
-
-    @objc public func toggleSmartFilter() {
-        if let watcher = clipboardWatcher {
-            watcher.isSmartFilterEnabled = !watcher.isSmartFilterEnabled
-            controlCenterState?.refresh()
-        }
-    }
-
-    @objc public func toggleScreenshotWatcher() {
-        if let watcher = screenshotWatcher {
-            watcher.isEnabled = !watcher.isEnabled
-            controlCenterState?.refresh()
-        }
-    }
-
-    @objc public func toggleShakeToClear() {
-        if let panel = hudPanel {
-            panel.shakeDetector.isEnabled = !panel.shakeDetector.isEnabled
-            controlCenterState?.refresh()
-        }
-    }
-
-    @objc public func toggleLaunchAtLogin() {
-        let current = LaunchAtLoginManager.shared.isEnabled
-        LaunchAtLoginManager.shared.setEnabled(!current)
-        controlCenterState?.refresh()
+        controlCenterState?.toggleTracking()
     }
 
     @objc public func checkForUpdates() {

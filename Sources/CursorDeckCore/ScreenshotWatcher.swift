@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 
 /// Automatically monitors the macOS screenshot directory (default: ~/Desktop)
 /// for newly taken screenshots (Cmd+Shift+4, Cmd+Shift+3, Cmd+Shift+5)
@@ -7,7 +8,6 @@ import Foundation
 public final class ScreenshotWatcher {
     private let queueManager: DeckQueueManager
     private var source: DispatchSourceFileSystemObject?
-    private var directoryFileDescriptor: Int32 = -1
     private var processedFilePaths: Set<String> = []
     private var watchedDirectoryURL: URL
     private let monitorQueue = DispatchQueue(label: "com.cursordeck.screenshotwatcher", qos: .utility)
@@ -92,8 +92,6 @@ public final class ScreenshotWatcher {
             return
         }
 
-        self.directoryFileDescriptor = fd
-
         let src = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .extend, .attrib],
@@ -104,11 +102,12 @@ public final class ScreenshotWatcher {
             self?.handleDirectoryChange()
         }
 
-        src.setCancelHandler { [weak self] in
-            if let fd = self?.directoryFileDescriptor, fd >= 0 {
-                close(fd)
-                self?.directoryFileDescriptor = -1
-            }
+        // AUDIT: capture the descriptor BY VALUE. The old handler read `self.directoryFileDescriptor`
+        // when it ran (asynchronously). Toggling Screenshots off then on quickly made the OLD handler close
+        // the NEW descriptor (watching silently stopped) and leak the old one; and with deinit's weak self
+        // the descriptor was never closed at all.
+        src.setCancelHandler {
+            close(fd)
         }
 
         src.resume()
@@ -119,6 +118,32 @@ public final class ScreenshotWatcher {
     public func stop() {
         source?.cancel()
         source = nil
+    }
+
+    private func ingestWhenReady(url: URL, filename: String, attempt: Int = 0, lastSize: Int = -1) {
+        monitorQueue.asyncAfter(deadline: .now() + 0.10) { [weak self] in
+            guard let self = self else { return }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            let stable = size > 500 && size == lastSize
+            let ready = stable && Self.isImageComplete(url)
+
+            if ready || (attempt >= 15 && size > 500) {   // give up waiting after ~1.5s and fall back to old behaviour
+                DispatchQueue.main.async {
+                    guard !self.isPaused else { return }
+                    print("[ScreenshotWatcher] Captured new screenshot: \(filename) (\(size) bytes)")
+                    self.queueManager.add(existingFileURL: url)
+                }
+            } else if attempt < 15 {
+                self.ingestWhenReady(url: url, filename: filename, attempt: attempt + 1, lastSize: size)
+            }
+        }
+    }
+
+    /// true when ImageIO can open the file and reports it complete; true for formats ImageIO can't open
+    /// (size stability is then the only signal).
+    private static func isImageComplete(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return true }
+        return CGImageSourceGetStatus(source) == .statusComplete && CGImageSourceGetCount(source) > 0
     }
 
     private func handleDirectoryChange() {
@@ -163,22 +188,12 @@ public final class ScreenshotWatcher {
             if isScreenshotName {
                 processedFilePaths.insert(fullPath)
 
-                // Wait 200ms to allow macOS screenshot utility to finish flushing file to disk
-                monitorQueue.asyncAfter(deadline: .now() + 0.20) { [weak self] in
-                    guard let self = self else { return }
-                    // Re-verify file exists and has size
-                    guard let updatedAttrs = try? FileManager.default.attributesOfItem(atPath: fullPath),
-                          let updatedSize = updatedAttrs[.size] as? Int, updatedSize > 500 else {
-                        return
-                    }
-
-                    DispatchQueue.main.async {
-                        guard !self.isPaused else { return }
-                        print("[ScreenshotWatcher] Captured new screenshot: \(filename) (\(updatedSize) bytes)")
-                        self.queueManager.add(existingFileURL: url)
-                    }
-                }
+                // AUDIT: instead of one blind 200ms wait, poll until the file size has stopped changing
+                // and ImageIO reports the image complete (large Retina / slow disks can take longer),
+                // so a half-written screenshot is never ingested. Earliest ingest is still ~200ms.
+                ingestWhenReady(url: url, filename: filename)
             }
         }
     }
 }
+

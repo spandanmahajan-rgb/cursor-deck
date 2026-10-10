@@ -21,7 +21,7 @@ Zero terminal needed. Zero accessibility or screen recording permissions. Always
 
 ## 🚀 Installation
 
-1. Download **[`CursorDeck-v1.0.dmg`](CursorDeck-v1.0.dmg)**.
+1. Download the latest **`CursorDeck-v<version>.dmg`** from the **[Releases page](https://github.com/spandanmahajan-rgb/cursor-deck/releases/latest)**.
 2. Double-click the DMG and drag **Cursor Deck** into your **Applications** folder.
 3. Open **Cursor Deck** from your Applications folder.
 

@@ -313,7 +313,10 @@ final class PreviewThumbnailCell: NSView {
         imageView.frame = bounds
         imageView.autoresizingMask = [.width, .height]
         imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.image = NSImage(contentsOf: item.fileURL)
+        // AUDIT: cached downsampled thumbnail (decoded once, pre-warmed on add) instead of a full-size
+        // decode on the main thread for every cell on every rebuild. Falls back exactly as before.
+        imageView.image = DeckThumbnailCache.shared.thumbnail(for: item.fileURL)
+            ?? NSImage(contentsOf: item.fileURL)
             ?? NSWorkspace.shared.icon(forFile: item.fileURL.path)
         addSubview(imageView)
 
@@ -354,3 +357,4 @@ final class PreviewThumbnailCell: NSView {
         NSAnimationContext.runAnimationGroup { $0.duration = 0.15; deleteButton.animator().alphaValue = 0.0 }
     }
 }
+

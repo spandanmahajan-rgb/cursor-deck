@@ -53,8 +53,4 @@ public final class ShakeDetector {
             onShakeDetected?()
         }
     }
-
-    public func reset() {
-        samples.removeAll()
-    }
 }

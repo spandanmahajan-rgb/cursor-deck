@@ -6,9 +6,14 @@ import CursorDeckCore
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
-// Ensure Launch at Startup is active by default when installed in /Applications
-if Bundle.main.bundlePath.hasPrefix("/Applications") && !LaunchAtLoginManager.shared.isEnabled {
-    LaunchAtLoginManager.shared.installLaunchAgent()
+// Turn Launch at Login on by default, but only the first time the app runs from /Applications.
+// (It used to re-enable on EVERY launch, so switching it off never stuck past a restart or update.)
+let launchAtLoginDefaultKey = "CursorDeck_launchAtLoginDefaultApplied"
+if Bundle.main.bundlePath.hasPrefix("/Applications") && !UserDefaults.standard.bool(forKey: launchAtLoginDefaultKey) {
+    if !LaunchAtLoginManager.shared.isEnabled {
+        LaunchAtLoginManager.shared.installLaunchAgent()
+    }
+    UserDefaults.standard.set(true, forKey: launchAtLoginDefaultKey)
 }
 
 let queueManager = DeckQueueManager()
