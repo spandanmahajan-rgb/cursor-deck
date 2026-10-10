@@ -15,10 +15,6 @@ public final class ClipboardWatcher {
     private let queueManager: DeckQueueManager
     public weak var delegate: ClipboardWatcherDelegate?
 
-    public var isWatching: Bool {
-        return timer != nil
-    }
-
     /// Whether tracking is paused by the user
     public var isPaused: Bool = false {
         didSet {
@@ -166,6 +162,20 @@ public final class ClipboardWatcher {
         }
     }
 
+    private static let rawImageFlavors: [([NSPasteboard.PasteboardType], String)] = [
+        ([.png, .init("image/png"), .init("public.png")], "png"),
+        ([.init("public.jpeg"), .init("image/jpeg"), .init("image/jpg")], "jpg"),
+        ([.tiff, .init("public.tiff")], "tiff"),
+        ([.init("org.webmproject.webp"), .init("image/webp")], "webp"),
+        ([.init("com.compuserve.gif"), .init("image/gif")], "gif"),
+    ]
+
+    private static let secretMarkerTypes: Set<String> = [
+        "org.nspasteboard.ConcealedType",
+        "org.nspasteboard.TransientType",
+        "com.agilebits.onepassword",          // older 1Password builds
+    ]
+
     @discardableResult
     private func extractAndCaptureImage(for changeCount: Int) -> Bool {
         guard pasteboard.changeCount == changeCount else { return false }
@@ -177,6 +187,14 @@ public final class ClipboardWatcher {
 
         guard let types = pasteboard.types, !types.isEmpty else {
             return false
+        }
+
+        // AUDIT: password managers (1Password, Bitwarden, Keychain…) tag copies as concealed/transient per
+        // nspasteboard.org, meaning "never record this". Skip them so e.g. a vault's ID scan or 2FA QR code
+        // never lands in the deck or on disk. Applies even with Smart Filter off.
+        if types.contains(where: { Self.secretMarkerTypes.contains($0.rawValue) }) {
+            lastProcessedChangeCount = changeCount
+            return true
         }
 
         if isSmartFilterEnabled {
@@ -263,83 +281,16 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 4. PNG image data
-        let pngTypes = [
-            NSPasteboard.PasteboardType.png,
-            NSPasteboard.PasteboardType("image/png"),
-            NSPasteboard.PasteboardType("public.png")
-        ]
-        for t in pngTypes {
-            if let pngData = pasteboard.data(forType: t), !pngData.isEmpty {
-                if let item = queueManager.add(imageData: pngData, extension: "png") {
-                    delegate?.clipboardWatcher(self, didCaptureItem: item)
-                    lastProcessedChangeCount = changeCount
-                    cancelPendingRetries()
-                    return true
+        // 4-7. Raw image data, in priority order: PNG, JPEG, TIFF (stored as PNG), WebP, GIF
+        for (types, ext) in Self.rawImageFlavors {
+            for t in types {
+                guard var data = pasteboard.data(forType: t), !data.isEmpty else { continue }
+                if ext == "tiff" {
+                    guard let rep = NSBitmapImageRep(data: data),
+                          let png = rep.representation(using: .png, properties: [:]), !png.isEmpty else { continue }
+                    data = png
                 }
-            }
-        }
-
-        // 5. JPEG image data
-        let jpegTypes = [
-            NSPasteboard.PasteboardType("public.jpeg"),
-            NSPasteboard.PasteboardType("image/jpeg"),
-            NSPasteboard.PasteboardType("image/jpg")
-        ]
-        for t in jpegTypes {
-            if let jpegData = pasteboard.data(forType: t), !jpegData.isEmpty {
-                if let item = queueManager.add(imageData: jpegData, extension: "jpg") {
-                    delegate?.clipboardWatcher(self, didCaptureItem: item)
-                    lastProcessedChangeCount = changeCount
-                    cancelPendingRetries()
-                    return true
-                }
-            }
-        }
-
-        // 6. TIFF image data
-        let tiffTypes = [
-            NSPasteboard.PasteboardType.tiff,
-            NSPasteboard.PasteboardType("public.tiff")
-        ]
-        for t in tiffTypes {
-            if let tiffData = pasteboard.data(forType: t), !tiffData.isEmpty {
-                if let imageRep = NSBitmapImageRep(data: tiffData),
-                   let convertedPng = imageRep.representation(using: .png, properties: [:]),
-                   !convertedPng.isEmpty {
-                    if let item = queueManager.add(imageData: convertedPng, extension: "png") {
-                        delegate?.clipboardWatcher(self, didCaptureItem: item)
-                        lastProcessedChangeCount = changeCount
-                        cancelPendingRetries()
-                        return true
-                    }
-                }
-            }
-        }
-
-        // 7. WebP / GIF image data
-        let webpTypes = [
-            NSPasteboard.PasteboardType("org.webmproject.webp"),
-            NSPasteboard.PasteboardType("image/webp")
-        ]
-        for t in webpTypes {
-            if let webpData = pasteboard.data(forType: t), !webpData.isEmpty {
-                if let item = queueManager.add(imageData: webpData, extension: "webp") {
-                    delegate?.clipboardWatcher(self, didCaptureItem: item)
-                    lastProcessedChangeCount = changeCount
-                    cancelPendingRetries()
-                    return true
-                }
-            }
-        }
-
-        let gifTypes = [
-            NSPasteboard.PasteboardType("com.compuserve.gif"),
-            NSPasteboard.PasteboardType("image/gif")
-        ]
-        for t in gifTypes {
-            if let gifData = pasteboard.data(forType: t), !gifData.isEmpty {
-                if let item = queueManager.add(imageData: gifData, extension: "gif") {
+                if let item = queueManager.add(imageData: data, extension: ext == "tiff" ? "png" : ext) {
                     delegate?.clipboardWatcher(self, didCaptureItem: item)
                     lastProcessedChangeCount = changeCount
                     cancelPendingRetries()

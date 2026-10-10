@@ -44,6 +44,9 @@ public final class DeckControlCenterState: ObservableObject {
     private weak var hudPanel: CursorHUDPanel?
     private var observerToken: UUID?
 
+    /// Lets the menu bar icon show/hide ⏸ whenever tracking is paused or resumed from anywhere.
+    public var onTrackingPausedChanged: (() -> Void)?
+
     public init(
         queueManager: DeckQueueManager? = nil,
         clipboardWatcher: ClipboardWatcher? = nil,
@@ -77,6 +80,7 @@ public final class DeckControlCenterState: ObservableObject {
         clipboardWatcher?.isPaused = newPaused
         screenshotWatcher?.isPaused = newPaused
         isTrackingPaused = newPaused
+        onTrackingPausedChanged?()
     }
 
     public func toggleSmartFilter() {

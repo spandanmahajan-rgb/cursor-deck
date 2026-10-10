@@ -13,8 +13,6 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     public weak var delegate: DeckHUDViewDelegate?
     public var queueManager: DeckQueueManager?
 
-    public static let pillHeight: CGFloat = 28.0
-
     // Native Liquid Glass Visual Effect View
     private let visualEffectView = NSVisualEffectView()
 
@@ -22,7 +20,6 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private let dotView = NSView()
     private let countLabel = NSTextField(labelWithString: "0")
     private let iconImageView = NSImageView()
-    private var isShowingUndoFeedback: Bool = false
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -122,70 +119,11 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     }
 
     public func updateCount(_ count: Int, animateGlow: Bool = false) {
-        if !isShowingUndoFeedback {
-            countLabel.stringValue = "\(count)"
-        }
+        countLabel.stringValue = "\(count)"
         needsDisplay = true
 
         if animateGlow && count > 0 {
             triggerCaptureGlowAnimation()
-        }
-    }
-
-    /// Shows tactile pop feedback when the last item is discarded via Option + Shake gesture
-    public func showRemovedLastFeedback(remainingCount: Int) {
-        isShowingUndoFeedback = true
-
-        // 1. Amber/Coral pulse on border and scale bounce
-        if let layer = layer {
-            let borderPulse = CAKeyframeAnimation(keyPath: "borderColor")
-            borderPulse.values = [
-                NSColor(white: 1.0, alpha: 0.28).cgColor,
-                NSColor(red: 1.0, green: 0.45, blue: 0.20, alpha: 0.95).cgColor,
-                NSColor(white: 1.0, alpha: 0.28).cgColor
-            ]
-            borderPulse.keyTimes = [0.0, 0.35, 1.0]
-            borderPulse.duration = 0.45
-            borderPulse.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            layer.add(borderPulse, forKey: "borderPulseUndo")
-
-            let bounceAnim = CAKeyframeAnimation(keyPath: "transform.scale")
-            bounceAnim.values = [1.0, 1.12, 1.0]
-            bounceAnim.keyTimes = [0.0, 0.30, 1.0]
-            bounceAnim.duration = 0.35
-            bounceAnim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            layer.add(bounceAnim, forKey: "pillBounceUndo")
-        }
-
-        // 2. Dot temporarily flashes amber/coral
-        if let dotLayer = dotView.layer {
-            let dotAnim = CAKeyframeAnimation(keyPath: "backgroundColor")
-            dotAnim.values = [
-                NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0).cgColor,
-                NSColor(red: 1.0, green: 0.40, blue: 0.20, alpha: 1.0).cgColor,
-                NSColor(red: 0.20, green: 0.85, blue: 0.40, alpha: 1.0).cgColor
-            ]
-            dotAnim.keyTimes = [0.0, 0.35, 1.0]
-            dotAnim.duration = 0.50
-            dotAnim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            dotLayer.add(dotAnim, forKey: "dotUndoFlash")
-        }
-
-        // 3. Count label temporarily displays "⌫" with pop animation
-        countLabel.stringValue = "⌫"
-        if let countLayer = countLabel.layer {
-            let popAnim = CAKeyframeAnimation(keyPath: "transform.scale")
-            popAnim.values = [1.0, 1.25, 1.0]
-            popAnim.keyTimes = [0.0, 0.35, 1.0]
-            popAnim.duration = 0.40
-            popAnim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            countLayer.add(popAnim, forKey: "popUndo")
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-            guard let self = self else { return }
-            self.isShowingUndoFeedback = false
-            self.countLabel.stringValue = "\(remainingCount)"
         }
     }
 
@@ -323,12 +261,11 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
             // Use the actual image as the drag thumbnail (64pt square, stacked)
             let thumbSize: CGFloat = 64
-            let thumb: NSImage
-            if let loaded = NSImage(contentsOf: item.fileURL) {
-                thumb = loaded
-            } else {
-                thumb = NSWorkspace.shared.icon(forFile: item.fileURL.path)
-            }
+            // AUDIT: use the cached downsampled thumbnail instead of decoding every full-size image
+            // synchronously on the main thread when the drag starts.
+            let thumb: NSImage = DeckThumbnailCache.shared.thumbnail(for: item.fileURL)
+                ?? NSImage(contentsOf: item.fileURL)
+                ?? NSWorkspace.shared.icon(forFile: item.fileURL.path)
             // Slight offset per item so the stack is visible
             let offset = CGFloat(idx) * 4
             dragItem.setDraggingFrame(
@@ -376,19 +313,30 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     }
 
     /// Shows instant feedback on the pill when clicked to copy
+    private var copiedFeedbackToken = 0
+
     public func showCopiedFeedback() {
         triggerCaptureGlowAnimation()
-        let previousCount = countLabel.stringValue
+        // AUDIT: the old version remembered the *displayed* text and restored it later. Clicking twice
+        // within 1.2s remembered "✓" itself and left the pill stuck on ✓; a copy during the 1.2s restored a
+        // stale count. Restore the live count instead, and let only the latest click's timer act.
+        copiedFeedbackToken &+= 1
+        let token = copiedFeedbackToken
         countLabel.stringValue = "✓"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            guard let self = self else { return }
-            self.countLabel.stringValue = previousCount
+            guard let self = self, self.copiedFeedbackToken == token else { return }
+            self.countLabel.stringValue = "\(self.queueManager?.count ?? 0)"
         }
     }
 
     private func appendDragLog(_ message: String) {
-        let path = "/private/tmp/cursor-deck.log"
+        // AUDIT: was /private/tmp/cursor-deck.log (readable by other accounts); keep it in the per-user temp dir.
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("cursor-deck.log").path
         guard let data = message.data(using: .utf8) else { return }
+        // AUDIT: this debug log grew without bound; keep it under ~200 KB.
+        if let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int), size > 200_000 {
+            try? FileManager.default.removeItem(atPath: path)
+        }
         if FileManager.default.fileExists(atPath: path) {
             if let handle = FileHandle(forWritingAtPath: path) {
                 handle.seekToEndOfFile()
@@ -400,3 +348,4 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         }
     }
 }
+

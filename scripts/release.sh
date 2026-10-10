@@ -14,6 +14,11 @@ echo "========================================"
 echo "  Deploying CursorDeck v$VERSION"
 echo "========================================"
 
+# 0. Tests must pass before anything is built or published (asserts only run in debug builds)
+echo "Running tests..."
+swift build
+.build/debug/cursor-deck-tests
+
 # 1. Update version in UpdateManager.swift & Info.plist
 sed -i '' "s/public static let currentVersion = \".*\"/public static let currentVersion = \"$VERSION\"/" Sources/CursorDeckCore/UpdateManager.swift
 plutil -replace CFBundleShortVersionString -string "$VERSION" CursorDeck.app/Contents/Info.plist 2>/dev/null || true
@@ -41,15 +46,15 @@ echo "Building DMG..."
 rm -rf .dmg_staging && mkdir -p .dmg_staging
 cp -R CursorDeck.app .dmg_staging/
 ln -s /Applications .dmg_staging/Applications
-rm -f "CursorDeck-v$VERSION.dmg" "CursorDeck-v1.0.dmg"
+rm -f "CursorDeck-v$VERSION.dmg"
 hdiutil create -volname "CursorDeck" -srcfolder .dmg_staging -ov -format UDZO "CursorDeck-v$VERSION.dmg"
-cp "CursorDeck-v$VERSION.dmg" "CursorDeck-v1.0.dmg"
 rm -rf .dmg_staging
 
 # 6. Commit version bump
 git add .
 git commit -m "Release v$VERSION: $NOTES" || true
-git push origin main || true
+# Stop here if the push fails: publishing a release on top of an un-pushed commit would tag old code.
+git push origin main
 
 # 7. Create/Upload GitHub Release
 echo "Publishing GitHub Release v$VERSION..."

@@ -85,54 +85,22 @@ func testPasteboardWriterPayload() {
 func testDragPasteboard() {
     print("Running testDragPasteboard...")
     let tempURL = URL(fileURLWithPath: "/tmp/cursor_deck_test_drag.png")
+    let tempURL2 = URL(fileURLWithPath: "/tmp/cursor_deck_test_drag2.png")
     try? createMockPNGData().write(to: tempURL)
-    defer { try? FileManager.default.removeItem(at: tempURL) }
+    try? createMockPNGData().write(to: tempURL2)
+    defer {
+        try? FileManager.default.removeItem(at: tempURL)
+        try? FileManager.default.removeItem(at: tempURL2)
+    }
 
+    // Same payload DeckHUDView builds for a drag: one NSURL per item.
     let pboard = NSPasteboard(name: .drag)
     pboard.clearContents()
-
-    let writer = DeckDragItemWriter(fileURL: tempURL)
-    pboard.writeObjects([writer])
-
-    print("--- Drag Pasteboard with DeckDragItemWriter ---")
-    print("Types on drag pasteboard:", pboard.types?.map(\.rawValue) ?? [])
-    for pbType in pboard.types ?? [] {
-        let prop = pboard.propertyList(forType: pbType)
-        let data = pboard.data(forType: pbType)
-        let str = pboard.string(forType: pbType)
-        print("  Type: \(pbType.rawValue)")
-        print("    string: \(str ?? "nil")")
-        print("    propertyList: \(String(describing: prop).prefix(100))")
-        print("    data length: \(data?.count ?? 0)")
-    }
-
-    // Now test with multiple NSURLs directly
-    let tempURL2 = URL(fileURLWithPath: "/tmp/cursor_deck_test_drag2.png")
-    try? createMockPNGData().write(to: tempURL2)
-    defer { try? FileManager.default.removeItem(at: tempURL2) }
-
-    pboard.clearContents()
     pboard.writeObjects([tempURL as NSURL, tempURL2 as NSURL])
-    print("\n--- Drag Pasteboard with 2 NSURLs ---")
-    print("Pasteboard items count:", pboard.pasteboardItems?.count ?? 0)
-    print("Types on drag pasteboard:", pboard.types?.map(\.rawValue) ?? [])
-    if let filenames = pboard.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] {
-        print("NSFilenamesPboardType paths count:", filenames.count, "paths:", filenames)
-    }
-
-    // Inspect deck_icon_original.png
-    let iconURL = URL(fileURLWithPath: "deck_icon_original.png")
-    if let img = NSImage(contentsOf: iconURL),
-       let rep = img.representations.first as? NSBitmapImageRep {
-        print("\n--- Inspecting deck_icon_original.png ---")
-        print("Dimensions:", rep.pixelsWide, "x", rep.pixelsHigh)
-        // Sample several pixels
-        for (x, y) in [(512, 510), (100, 100), (20, 20), (120, 300), (500, 950)] {
-            if let c = rep.colorAt(x: x, y: y) {
-                print("  Pixel (\(x), \(y)): R=\(c.redComponent), G=\(c.greenComponent), B=\(c.blueComponent), A=\(c.alphaComponent)")
-            }
-        }
-    }
+    assert(pboard.pasteboardItems?.count == 2, "Drag pasteboard should carry one item per deck image")
+    let urls = pboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
+    assert(urls.map(\.path) == [tempURL.path, tempURL2.path], "Drag pasteboard should list the deck files in order")
+    print("✅ testDragPasteboard passed!")
 }
 
 func testHUDPanelLifecycle() {
@@ -237,7 +205,32 @@ func testPinterestLiveVideoResolution() {
 }
 
 print("\n--- Running CursorDeck Core Verification Tests ---")
+func testConcealedClipboardIsSkipped() {
+    print("Running testConcealedClipboardIsSkipped...")
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("com.cursordeck.tests.\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    let watcher = ClipboardWatcher(queueManager: queueManager, pasteboard: pasteboard)
+    let pngData = createMockPNGData()
+
+    // Control: a plain image copy is captured.
+    pasteboard.clearContents()
+    pasteboard.setData(pngData, forType: .png)
+    watcher.checkForNewClipboardContent()
+    assert(queueManager.count == 1, "Plain image copy should be captured")
+
+    // Same image tagged as concealed (password manager) must be ignored.
+    pasteboard.clearContents()
+    pasteboard.setData(pngData, forType: .png)
+    pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+    watcher.checkForNewClipboardContent()
+    assert(queueManager.count == 1, "Concealed copy must not enter the deck")
+    print("✅ testConcealedClipboardIsSkipped passed!")
+}
+
 testQueueAddAndClear()
+testConcealedClipboardIsSkipped()
 testPasteboardWriterPayload()
 testDragPasteboard()
 testHUDPanelLifecycle()

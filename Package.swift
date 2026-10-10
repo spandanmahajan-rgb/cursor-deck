@@ -16,16 +16,8 @@ let package = Package(
             targets: ["CursorDeckApp"]
         ),
         .executable(
-            name: "cursor-deck-cli",
-            targets: ["CursorDeckCLI"]
-        ),
-        .executable(
             name: "cursor-deck-tests",
             targets: ["CursorDeckTests"]
-        ),
-        .executable(
-            name: "cursor-deck-preview",
-            targets: ["CursorDeckPreview"]
         )
     ],
     dependencies: [],
@@ -39,15 +31,7 @@ let package = Package(
             dependencies: ["CursorDeckCore"]
         ),
         .executableTarget(
-            name: "CursorDeckCLI",
-            dependencies: ["CursorDeckCore"]
-        ),
-        .executableTarget(
             name: "CursorDeckTests",
-            dependencies: ["CursorDeckCore"]
-        ),
-        .executableTarget(
-            name: "CursorDeckPreview",
             dependencies: ["CursorDeckCore"]
         )
     ]

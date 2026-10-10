@@ -86,8 +86,11 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     public override var canBecomeKey: Bool { return false }
     public override var canBecomeMain: Bool { return false }
 
+    /// AUDIT: the 60 fps timer now only runs while the deck has items. It used to fire ~62x/second
+    /// forever (just to hide an already-hidden panel), which keeps the CPU awake while idle.
+    /// refreshHUD() starts/stops it as the deck fills and empties; calling this on an empty deck is a no-op.
     public func startTracking(interval: TimeInterval = 0.016) {
-        guard trackingTimer == nil else { return }
+        guard trackingTimer == nil, !queueManager.isEmpty else { return }
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.updatePosition()
         }
@@ -199,6 +202,8 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
         hudView.updateCount(count, animateGlow: hasNewItems)
 
+        if count > 0 { startTracking() } else { stopTracking() }
+
         let targetWidth = badgeWidth
         if frame.width != targetWidth {
             let origin = frame.origin
@@ -265,3 +270,4 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         }
     }
 }
+

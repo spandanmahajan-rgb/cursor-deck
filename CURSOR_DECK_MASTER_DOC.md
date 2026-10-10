@@ -148,7 +148,6 @@ Sources/
 │   ├── CursorHUDPanel.swift           # 60fps cursor-following NSPanel, displayLink sync
 │   ├── DeckHUDView.swift              # Frosted glass pill UI, drag source coordinator, gestures
 │   ├── DeckPreviewPanel.swift         # Frosted glass grid preview window (thumbnails, delete buttons)
-│   ├── DeckDragItemWriter.swift       # Pasteboard multi-file drop provider (NSFilePromise, URLs)
 │   ├── PasteboardWriter.swift         # Arms clipboard for multi-item chat paste (WhatsApp, Slack)
 │   ├── ClipboardWatcher.swift         # 80ms pasteboard poller with Async Retry Ladder & Smart Filter
 │   ├── ScreenshotWatcher.swift        # DispatchSource kernel watcher on ~/Desktop for screenshots
@@ -161,9 +160,6 @@ Sources/
 │   ├── DeckLogoAsset.swift            # Procedural drawing for solid card-stack menu bar icon
 │   ├── LaunchAtLoginManager.swift     # LaunchAgent plist persistence (~/Library/LaunchAgents/)
 │   └── UpdateManager.swift            # GitHub Releases API client, version compare, in-place swapper
-│
-├── CursorDeckPreview/
-│   └── main.swift                     # Headless snapshot utility for generating visual artifacts
 │
 └── CursorDeckTests/
     └── main.swift                     # Unit tests for queue manager, smart filter, and pin resolver
