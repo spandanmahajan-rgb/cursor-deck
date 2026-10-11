@@ -27,7 +27,6 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     // Subviews
     private let dotView = NSView()
     private let countLabel = NSTextField(labelWithString: "0")
-    private let iconImageView = NSImageView()
 
     // Notice (PillNotice): text that replaces the count while a message is showing.
     // The text sits at its final width inside a clip that is exactly the pill's shape, so as the pill grows from the
@@ -111,14 +110,12 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         addSubview(countLabel)
 
         // 6. Solid Deck Logo icon (subtle, secondary accent)
-        iconImageView.image = QueLogoAsset.pillImage
-        iconImageView.contentTintColor = NSColor(white: 0.72, alpha: 0.88)
-        iconImageView.imageScaling = .scaleProportionallyUpOrDown
-        iconImageView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(iconImageView)
 
         NSLayoutConstraint.activate([
-            dotView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            // [ ● 3 ]: just the status dot and the count (the 10pt logo that used to follow was too small to read
+            // and carried no information). With the badge widths in CursorHUDPanel (40pt + 8pt per extra digit) the
+            // visible dot-to-digits group sits centred, ~10pt from each edge (the label box is wider than its digits).
+            dotView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             dotView.centerYAnchor.constraint(equalTo: centerYAnchor),
             dotView.widthAnchor.constraint(equalToConstant: 6),
             dotView.heightAnchor.constraint(equalToConstant: 6),
@@ -126,16 +123,12 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             countLabel.leadingAnchor.constraint(equalTo: dotView.trailingAnchor, constant: 4),
             countLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            iconImageView.leadingAnchor.constraint(equalTo: countLabel.trailingAnchor, constant: 4),
             // Not required: lets the pill shrink to its 28pt dot when collapsing (the count is hidden then).
             {
-                let c = iconImageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9)
+                let c = countLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
                 c.priority = .dragThatCannotResizeWindow   // < 500, so the window doesn't treat it as a minimum size
                 return c
-            }(),
-            iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconImageView.widthAnchor.constraint(equalToConstant: 10),
-            iconImageView.heightAnchor.constraint(equalToConstant: 10)
+            }()
         ])
 
         // 7. Notice text (hidden until a PillNotice is shown)
@@ -181,7 +174,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         setAccessibilityLabel("Que")
         setAccessibilityValue("0 items")
         setAccessibilityHelp("Press to copy everything in Que for pasting. Option-click to preview it.")
-        for subview in [dotView, countLabel, iconImageView, noticeClipView, noticeStack, noticeMessageLabel, noticeDetailLabel] {
+        for subview in [dotView, countLabel, noticeClipView, noticeStack, noticeMessageLabel, noticeDetailLabel] {
             subview.setAccessibilityElement(false)
         }
     }
@@ -276,7 +269,6 @@ public final class DeckHUDView: NSView, NSDraggingSource {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.12
                 countLabel.animator().alphaValue = 0
-                iconImageView.animator().alphaValue = 0
             }
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.24
@@ -298,7 +290,6 @@ public final class DeckHUDView: NSView, NSDraggingSource {
                 context.duration = 0.18
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.6, 0, 1, 1)
                 countLabel.animator().alphaValue = 1
-                iconImageView.animator().alphaValue = 1
             }
         }
     }
@@ -307,7 +298,6 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     public func restoreCountInstantly() {
         noticeStack.alphaValue = 0
         countLabel.alphaValue = 1
-        iconImageView.alphaValue = 1
     }
 
     /// Solid shape illumination glow through native Liquid Glass

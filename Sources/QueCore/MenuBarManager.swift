@@ -13,11 +13,10 @@ public final class MenuBarManager: NSObject {
     private weak var screenshotWatcher: ScreenshotWatcher?
     private weak var hudPanel: CursorHUDPanel?
 
-    private var panel: DeckControlCenterPanel?
     private var controlCenterState: DeckControlCenterState?
-    private var globalClickMonitor: Any?
-    private var localClickMonitor: Any?
-    private var lastDismissTimestamp: TimeInterval = 0
+    /// The Control Center is shown as a real macOS menu (one item holding the SwiftUI panel), like Battery and Wi-Fi:
+    /// macOS then keeps the icon highlighted while it's open, and handles closing (click outside, Esc, icon click).
+    private let controlCenterMenu = NSMenu()
 
     public init(
         queueManager: DeckQueueManager,
@@ -31,10 +30,6 @@ public final class MenuBarManager: NSObject {
         self.hudPanel = hudPanel
         super.init()
         setupStatusBar()
-    }
-
-    deinit {
-        removeClickOutsideMonitors()
     }
 
     // MARK: - Update dot
@@ -101,24 +96,20 @@ public final class MenuBarManager: NSObject {
             self?.updateStatusItemBadge()
         }
 
-        let panel = DeckControlCenterPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 256, height: 350)
-        )
-        panel.onEscPressed = { [weak self] in
-            self?.closePanel()
-        }
-
         let hostingView = NSHostingView(
             rootView: DeckControlCenterView(
                 state: state,
                 onDismiss: { [weak self] in
                     self?.closePanel()
-                }
+                },
+                inMenu: true
             )
         )
         hostingView.frame = NSRect(x: 0, y: 0, width: 256, height: 350)
-        panel.contentView = hostingView
-        self.panel = panel
+        let item = NSMenuItem()
+        item.view = hostingView
+        controlCenterMenu.addItem(item)
+        controlCenterMenu.delegate = self
 
         updateStatusItemBadge()
 
@@ -130,119 +121,29 @@ public final class MenuBarManager: NSObject {
     @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
-            closePanel()
             showContextMenu(sender)
         } else {
-            let now = Date().timeIntervalSinceReferenceDate
-            if now - lastDismissTimestamp < 0.25 {
-                return
-            }
-            togglePanel(sender)
+            showControlCenter(sender)
         }
     }
 
-    public func togglePanel(_ sender: NSStatusBarButton) {
-        guard let panel = panel else { return }
-        if panel.isVisible {
-            closePanel()
-        } else {
-            openPanel(sender)
-        }
-    }
-
-    public func openPanel(_ sender: NSStatusBarButton) {
-        guard let panel = panel, let buttonWindow = sender.window else { return }
-        
+    /// Opens the Control Center menu under the icon. `performClick` runs the menu until it closes.
+    private func showControlCenter(_ sender: NSStatusBarButton) {
         controlCenterState?.refresh()
-        
-        let buttonScreenRect = buttonWindow.convertToScreen(sender.bounds)
-        let panelSize = NSSize(width: 256, height: 350)
-        
-        var originX = buttonScreenRect.midX - (panelSize.width / 2.0)
-        
-        if let screen = buttonWindow.screen ?? NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            if originX + panelSize.width > screenFrame.maxX - 8 {
-                originX = screenFrame.maxX - panelSize.width - 8
-            }
-            if originX < screenFrame.minX + 8 {
-                originX = screenFrame.minX + 8
-            }
-        }
-        
-        let originY = buttonScreenRect.minY - panelSize.height - 4
-        
-        panel.setFrame(NSRect(x: originX, y: originY, width: panelSize.width, height: panelSize.height), display: true)
-        panel.makeKeyAndOrderFront(nil)
-        
-        setupClickOutsideMonitors()
+        statusItem?.menu = controlCenterMenu
+        sender.performClick(nil)
+        statusItem?.menu = nil   // reset so clicks reach statusBarButtonClicked again
     }
 
     /// Opens the Control Center from code (the welcome tour's "Open Que").
     public func openControlCenter() {
-        guard let button = statusItem?.button, panel?.isVisible != true else { return }
-        openPanel(button)
+        guard let button = statusItem?.button else { return }
+        showControlCenter(button)
     }
 
+    /// Closes the Control Center (its buttons call this before opening the preview, an alert, or quitting).
     public func closePanel() {
-        guard let panel = panel, panel.isVisible else { return }
-        removeClickOutsideMonitors()
-        lastDismissTimestamp = Date().timeIntervalSinceReferenceDate
-        panel.orderOut(nil)
-    }
-
-    private func setupClickOutsideMonitors() {
-        removeClickOutsideMonitors()
-
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            guard let self = self, let panel = self.panel, panel.isVisible else { return }
-            
-            if let button = self.statusItem?.button, let buttonWindow = button.window {
-                let mouseLoc = NSEvent.mouseLocation
-                let buttonScreenRect = buttonWindow.convertToScreen(button.bounds)
-                if buttonScreenRect.contains(mouseLoc) {
-                    self.closePanel()
-                    return
-                }
-            }
-            
-            let mouseLoc = NSEvent.mouseLocation
-            if !panel.frame.contains(mouseLoc) {
-                self.closePanel()
-            }
-        }
-
-        localClickMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            guard let self = self, let panel = self.panel, panel.isVisible else { return event }
-            
-            if event.window != panel {
-                if let button = self.statusItem?.button, let buttonWindow = button.window {
-                    let mouseLoc = NSEvent.mouseLocation
-                    let buttonScreenRect = buttonWindow.convertToScreen(button.bounds)
-                    if buttonScreenRect.contains(mouseLoc) {
-                        self.closePanel()
-                        return event
-                    }
-                }
-                self.closePanel()
-            }
-            return event
-        }
-    }
-
-    private func removeClickOutsideMonitors() {
-        if let monitor = globalClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalClickMonitor = nil
-        }
-        if let monitor = localClickMonitor {
-            NSEvent.removeMonitor(monitor)
-            localClickMonitor = nil
-        }
+        controlCenterMenu.cancelTracking()
     }
 
     private func showContextMenu(_ sender: NSStatusBarButton) {
@@ -351,5 +252,12 @@ public final class MenuBarManager: NSObject {
 
     @objc public func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+}
+
+extension MenuBarManager: NSMenuDelegate {
+    public func menuWillOpen(_ menu: NSMenu) {
+        guard menu === controlCenterMenu else { return }
+        controlCenterState?.refresh()
     }
 }

@@ -20,7 +20,9 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     private let badgeHeight: CGFloat = 28.0
 
     private var badgeWidth: CGFloat {
-        return queueManager.count > 9 ? 66.0 : 58.0
+        // Dot + count, ~10pt visible padding each side: 40pt for one digit, 8pt more per extra digit.
+        let digits = String(queueManager.count).count
+        return 40.0 + CGFloat(max(digits, 1) - 1) * 8.0
     }
 
     // MARK: Notice state
@@ -69,7 +71,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
     public init(queueManager: DeckQueueManager) {
         self.queueManager = queueManager
-        let initialWidth: CGFloat = 58.0
+        let initialWidth: CGFloat = 40.0
         let rect = NSRect(x: 100, y: 100, width: initialWidth, height: badgeHeight)
 
         self.hudView = DeckHUDView(frame: NSRect(origin: .zero, size: rect.size))
@@ -289,7 +291,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
         if isMagnetHeld {
             // Magnet Snap: under the pointer, clamped safely to screen edges. The pointer sits over the pill's
-            // left part (its centre for the normal 58pt badge), so a wider notice grows to the right of it.
+            // left part (its centre for the normal badge), so a wider notice grows to the right of it.
             targetX = mousePos.x - min(currentW / 2, 29)
             targetY = mousePos.y - currentH / 2
             targetX = max(bounds.minX + 6, min(targetX, bounds.maxX - currentW - 6))

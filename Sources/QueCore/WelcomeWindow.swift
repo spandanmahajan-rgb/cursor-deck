@@ -379,20 +379,15 @@ struct WelcomeView: View {
     }
 }
 
-/// A static copy of the Que badge (dark glass capsule, green dot, count, mark) for the tour illustrations.
+/// A static copy of the Que badge (dark glass capsule, green dot, count) for the tour illustrations.
 struct QueBadgeMock: View {
     let count: Int
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(Color(red: 0.20, green: 0.85, blue: 0.40)).frame(width: 7, height: 7)
             Text("\(count)").font(.system(size: 15, weight: .semibold)).foregroundColor(.white)
-            Image(nsImage: QueLogoAsset.pillImage)
-                .renderingMode(.template)
-                .resizable()
-                .frame(width: 13, height: 13)
-                .foregroundColor(.white.opacity(0.9))
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .frame(height: 34)
         .background(Capsule().fill(Color(white: 0.12)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))

@@ -156,6 +156,8 @@ public enum PopoverPage {
 public struct DeckControlCenterView: View {
     @ObservedObject public var state: DeckControlCenterState
     public var onDismiss: (() -> Void)?
+    /// Shown inside a macOS menu (the menu bar Control Center): the menu supplies the glass, corners and border.
+    private let inMenu: Bool
 
     @State public var currentPage: PopoverPage
     @State private var hoveredRow: String? = nil
@@ -173,10 +175,12 @@ public struct DeckControlCenterView: View {
     public init(
         state: DeckControlCenterState,
         onDismiss: (() -> Void)? = nil,
+        inMenu: Bool = false,
         initialPage: PopoverPage = .controls
     ) {
         self.state = state
         self.onDismiss = onDismiss
+        self.inMenu = inMenu
         self._currentPage = State(initialValue: initialPage)
     }
 
@@ -201,12 +205,25 @@ public struct DeckControlCenterView: View {
         .frame(width: 256, height: 350)
         .clipped()
         .animation(pageAnimation, value: currentPage)
-        .background(PopoverMaterialBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
+        .modifier(StandaloneGlass(enabled: !inMenu))
+    }
+
+    /// Our own popover glass, corners and hairline, for when the view isn't inside a macOS menu.
+    private struct StandaloneGlass: ViewModifier {
+        let enabled: Bool
+        func body(content: Content) -> some View {
+            if enabled {
+                content
+                    .background(PopoverMaterialBackground())
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
+            } else {
+                content
+            }
+        }
     }
 
     // MARK: - Controls Page (Default Popover View)
@@ -535,7 +552,8 @@ public struct DeckControlCenterView: View {
                 Spacer()
 
                 Button(action: {
-                    state.quitApp()
+                    onDismiss?()   // close the menu first; quitting from inside an open menu is deferred
+                    DispatchQueue.main.async { state.quitApp() }
                 }) {
                     Text("Quit")
                         .font(.callout)
