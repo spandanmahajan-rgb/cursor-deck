@@ -48,8 +48,9 @@ echo "Building DMG..."
 rm -rf .dmg_staging && mkdir -p .dmg_staging
 cp -R Que.app .dmg_staging/
 ln -s /Applications .dmg_staging/Applications
-rm -f "Que-v$VERSION.dmg"
-hdiutil create -volname "Que" -srcfolder .dmg_staging -ov -format UDZO "Que-v$VERSION.dmg"
+# Fixed name (no version) so https://github.com/spandanmahajan-rgb/que/releases/latest/download/Que.dmg always works.
+rm -f Que.dmg
+hdiutil create -volname "Que" -srcfolder .dmg_staging -ov -format UDZO Que.dmg
 rm -rf .dmg_staging
 
 # 6. Commit version bump
@@ -61,7 +62,7 @@ git push origin main
 # 7. Create/Upload GitHub Release
 echo "Publishing GitHub Release v$VERSION..."
 gh release create "v$VERSION" \
-  "Que-v$VERSION.dmg" \
+  Que.dmg \
   Que.zip \
   --title "Que v$VERSION" \
   --notes "$NOTES" \

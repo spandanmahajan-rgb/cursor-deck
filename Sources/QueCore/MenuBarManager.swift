@@ -178,6 +178,12 @@ public final class MenuBarManager: NSObject {
         setupClickOutsideMonitors()
     }
 
+    /// Opens the Control Center from code (the welcome tour's "Open Que").
+    public func openControlCenter() {
+        guard let button = statusItem?.button, panel?.isVisible != true else { return }
+        openPanel(button)
+    }
+
     public func closePanel() {
         guard let panel = panel, panel.isVisible else { return }
         removeClickOutsideMonitors()

@@ -465,6 +465,25 @@ func testUpdateDotAssets() {
     print("✅ testUpdateDotAssets passed!")
 }
 
+/// The welcome window is for brand-new users only, and only once.
+func testWelcomeOnlyForNewUsers() {
+    print("Running testWelcomeOnlyForNewUsers...")
+    let suite = "com.que.tests.welcome.\(UUID().uuidString)"
+    let fresh = UserDefaults(suiteName: suite)!
+    defer { fresh.removePersistentDomain(forName: suite) }
+    assert(WelcomeWindowController.isNewUser(defaults: fresh), "Nothing saved yet: new user")
+    fresh.set(true, forKey: "Que_welcomeShown")
+    assert(!WelcomeWindowController.isNewUser(defaults: fresh), "Shown once: never again")
+
+    let suite2 = "com.que.tests.welcome.\(UUID().uuidString)"
+    let existing = UserDefaults(suiteName: suite2)!
+    defer { existing.removePersistentDomain(forName: suite2) }
+    existing.set(1_700_000_000.0, forKey: "CursorDeck_lastBackgroundCheck")
+    assert(!WelcomeWindowController.isNewUser(defaults: existing), "Existing CursorDeck/Que user: no welcome")
+    assert(existing.bool(forKey: "Que_welcomeShown"), "...and marked so it never appears after an update")
+    print("✅ testWelcomeOnlyForNewUsers passed!")
+}
+
 func testPinterestLiveBoard() {
     print("Running testPinterestLiveBoard...")
     let sem = DispatchSemaphore(value: 0)
@@ -548,5 +567,6 @@ testRemoveSeveralItems()
 testLegacyAppRename()
 testLoginItemMigration()
 testUpdateDotAssets()
+testWelcomeOnlyForNewUsers()
 testPinterestLiveBoard()
 print("All verification tests passed successfully! 🚀\n")

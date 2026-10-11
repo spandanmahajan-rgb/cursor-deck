@@ -22,13 +22,13 @@ No setup and no permissions: Que never asks for Accessibility, Screen Recording 
 
 ## Install
 
-1. Download **`Que-v<version>.dmg`** from the **[latest release](https://github.com/spandanmahajan-rgb/que/releases/latest)**.
+1. Download **[Que.dmg](https://github.com/spandanmahajan-rgb/que/releases/latest/download/Que.dmg)** (always the latest version; release notes on the **[releases page](https://github.com/spandanmahajan-rgb/que/releases/latest)**).
 2. Open it and drag **Que** into **Applications**.
 3. Open **Que**. Its icon appears in the menu bar.
 
 > **First launch:** Que isn't from the App Store, so macOS may say it's from an unidentified developer. Right-click Que in Applications, choose **Open**, then **Open** again. You only need to do this once.
 
-**Used CursorDeck?** Que is its new name. Updating from CursorDeck installs Que automatically, renames the app to Que and keeps your settings.
+**Used CursorDeck?** Que is its new name. Download Que.dmg above, drag Que into Applications and open it; your settings carry over. Then you can move CursorDeck from Applications to the Trash.
 
 ## How to use
 
