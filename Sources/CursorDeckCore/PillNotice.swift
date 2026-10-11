@@ -84,6 +84,12 @@ public extension PillNotice {
                    tone: .error, duration: 5)
     }
 
+    /// Public board, private profile: Pinterest hides it from logged-out visitors (which CursorDeck always is).
+    static func boardOnPrivateProfile() -> PillNotice {
+        PillNotice("This board is on a private profile",
+                   detail: "Only boards on public profiles can be added.", tone: .error, duration: 6)
+    }
+
     static func boardEmpty(name: String) -> PillNotice {
         PillNotice("“\(name)” has no pins to add", tone: .neutral, duration: 3)
     }
@@ -105,6 +111,11 @@ public extension PillNotice {
         let addHint = pinCount > cap ? "⌘-click adds the first \(cap)" : "⌘-click adds all"
         return PillNotice("\(pins) in “\(name)”", detail: "\(addHint), ⌥-click to choose",
                           tone: .neutral, duration: 10, primaryAction: addAll, alternateAction: choose)
+    }
+
+    /// Shown the moment ⌘-click lands, while the board's pins are still being listed (replaces the offer in place).
+    static func boardPreparing(name: String) -> PillNotice {
+        PillNotice("Adding from “\(name)”", detail: "Getting pins…", tone: .neutral, duration: nil)
     }
 
     static func boardAdding(count: Int, name: String) -> PillNotice {
@@ -136,6 +147,12 @@ public extension PillNotice {
     static func boardAlreadyAdded(name: String, choose: @escaping () -> Void) -> PillNotice {
         PillNotice("“\(name)” is already in the deck", detail: "⌥-click to choose pins anyway",
                    tone: .neutral, duration: 4, alternateAction: choose)
+    }
+
+    /// A copied .webm video: macOS can't decode WebM, so it can't become a GIF.
+    static func webmUnsupported() -> PillNotice {
+        PillNotice("WebM videos can't be turned into GIFs", detail: "Copy an MP4 or MOV version instead.",
+                   tone: .warning, duration: 4)
     }
 
     static func nothingDownloaded() -> PillNotice {

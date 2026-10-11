@@ -157,6 +157,8 @@ public struct DeckControlCenterView: View {
     @State private var hoveredRow: String? = nil
     @State private var hoveredAction: String? = nil
     @State private var isHowToUseHovered: Bool = false
+    @State private var expandedGuideItem: String? = nil
+    @State private var hoveredGuideItem: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Page slide normally; a plain cross-fade when Reduce Motion is on.
@@ -608,169 +610,177 @@ public struct DeckControlCenterView: View {
 
             dividerView
 
-            // Scrollable Instructions List (Visible scrollbar, generous breathing room)
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    // SECTION 1: CORE ACTIONS
-                    sectionHeader("Core Actions & Gestures")
-                        .padding(.top, 4)
+            // Instructions: one line each; click a row to show how it works (one open at a time).
+            ScrollViewReader { proxy in
+                // No SwiftUI indicators: with a mouse connected SwiftUI lays the rows out ~15pt narrower for a full-size
+                // scroll bar, which cut titles off ("Drop on Sli…"). OverlayScrollerStyle adds our thin bar instead.
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        sectionHeader("Core Actions & Gestures")
+                            .padding(.horizontal, 6)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
 
-                    instructionRow(
-                        symbol: "doc.on.doc",
-                        title: "Collect Images",
-                        badge: "⌘ C",
-                        description: "Right-click any image & copy (or press ⌘C) to start building your deck."
-                    )
+                        ForEach(Self.gestureGuide) { instructionRow($0, proxy: proxy) }
 
-                    instructionRow(
-                        symbol: "camera.viewfinder",
-                        title: "Screenshots",
-                        badge: "⌘ ⇧ 4",
-                        description: "Screenshots join the pill directly without cluttering your desktop."
-                    )
+                        dividerView
+                            .padding(.vertical, 6)
 
-                    instructionRow(
-                        symbol: "film.stack",
-                        title: "Pinterest to GIF",
-                        badge: "URL",
-                        description: "Copy a Pinterest video link to get a looping GIF (up to 4s)."
-                    )
+                        sectionHeader("Settings & Controls")
+                            .padding(.horizontal, 6)
+                            .padding(.bottom, 4)
 
-                    instructionRow(
-                        symbol: "arrow.down.doc",
-                        title: "Drop on Slides",
-                        badge: "⌘ + Drag",
-                        description: "Hold ⌘ to snap pill, drag to canvas, release ⌘. Drop on green + icon."
-                    )
-
-                    instructionRow(
-                        symbol: "bubble.left.and.bubble.right",
-                        title: "Copy for Chat",
-                        badge: "⌘ + Click",
-                        description: "⌘ + Click the pill to arm clipboard, then press ⌘V in WhatsApp or chat."
-                    )
-
-                    instructionRow(
-                        symbol: "square.grid.2x2",
-                        title: "Preview Grid",
-                        badge: "⌥ + Click",
-                        description: "Option + Click pill to inspect images or delete individual items (✕)."
-                    )
-
-                    instructionRow(
-                        symbol: "pointer.arrow.motionlines",
-                        title: "Shake to Clear",
-                        badge: "Shake",
-                        description: "Rapidly shake cursor back & forth to empty the entire deck."
-                    )
-
-                    dividerView
-                        .padding(.vertical, 3)
-
-                    // SECTION 2: SETTINGS & CONTROLS
-                    sectionHeader("Settings & Controls")
-
-                    instructionRow(
-                        symbol: "power",
-                        title: "CursorDeck Switch",
-                        badge: nil,
-                        description: "Master toggle to pause or resume tracking whenever you need."
-                    )
-
-                    instructionRow(
-                        symbol: "line.3.horizontal.decrease",
-                        title: "Smart Filter",
-                        badge: nil,
-                        description: "Ignores internal shape copies from Figma, Photoshop & Illustrator."
-                    )
-
-                    instructionRow(
-                        symbol: "camera.viewfinder",
-                        title: "Screenshots",
-                        badge: nil,
-                        description: "Toggles whether desktop screenshots are automatically collected."
-                    )
-
-                    instructionRow(
-                        symbol: "pointer.arrow.motionlines",
-                        title: "Shake to Clear",
-                        badge: nil,
-                        description: "Enables or disables rapid cursor shake gesture discard."
-                    )
-
-                    instructionRow(
-                        symbol: "power.circle",
-                        title: "Launch at Login",
-                        badge: nil,
-                        description: "Runs CursorDeck silently in menu bar on Mac startup."
-                    )
-
-                    instructionRow(
-                        symbol: "slider.horizontal.3",
-                        title: "Action Bar",
-                        badge: nil,
-                        description: "Quick buttons for Copy All, Grid Preview, and Clear."
-                    )
+                        ForEach(Self.settingsGuide) { instructionRow($0, proxy: proxy) }
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 10)
+                    .background(OverlayScrollerStyle())   // thin floating scroll bar; never narrows the text
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 14)
-                .background(OverlayScrollerStyle())   // thin floating scroll bar; never narrows the text
             }
         }
     }
 
-    private func instructionRow(
-        symbol: String,
-        title: String,
-        badge: String?,
-        description: String
-    ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            // Liquid Glass icon badge (Golden Gate token style)
-            ZStack {
-                Circle()
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(width: 25, height: 25)
+    struct GuideItem: Identifiable {
+        let id: String
+        let symbol: String
+        let title: String
+        let badge: String?
+        let description: String
+    }
 
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.18), Color.white.opacity(0.04)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 0.5
-                    )
-                    .frame(width: 25, height: 25)
+    static let gestureGuide: [GuideItem] = [
+        GuideItem(id: "collect", symbol: "doc.on.doc", title: "Collect Images", badge: "⌘ C",
+                  description: "Copy any image from a browser, Finder or a design app (right-click › Copy Image, or ⌘C). It joins the pill."),
+        GuideItem(id: "screenshots", symbol: "camera.viewfinder", title: "Screenshots", badge: "⌘ ⇧ 4",
+                  description: "Take a screenshot as usual and it goes straight into the pill, not onto your desktop. The pill hides while you pick an area."),
+        GuideItem(id: "boards", symbol: "rectangle.stack", title: "Pinterest Boards", badge: "Link",
+                  description: "Copy a board link and the pill offers it. ⌘-click the pill to add its pins (up to 100, skipping ones already in the deck), or ⌥-click to choose pins. Public boards only."),
+        GuideItem(id: "videos", symbol: "film.stack", title: "Videos to GIF", badge: "Link",
+                  description: "Copy a Pinterest video pin's link, a link ending in .mp4 or .mov, or a video file in Finder, and the pill turns it into a looping GIF (up to 4 seconds). YouTube and similar sites aren't supported."),
+        GuideItem(id: "drop", symbol: "arrow.down.doc", title: "Drop on Slides", badge: "⌘ + Drag",
+                  description: "Hold ⌘ so the pill snaps under the pointer, then drag it onto Slides, Keynote or Figma. Release ⌘ when the green + appears, then let go."),
+        GuideItem(id: "chat", symbol: "bubble.left.and.bubble.right", title: "Copy for Chat", badge: "⌘ + Click",
+                  description: "⌘-click the pill (a ✓ appears), then press ⌘V in WhatsApp, Slack or Telegram to paste every image at once."),
+        GuideItem(id: "grid", symbol: "square.grid.2x2", title: "Preview Grid", badge: "⌥ + Click",
+                  description: "⌥-click the pill to see everything in the deck. Hover a thumbnail and click ✕ to remove it, or drag it out to drop just that image (it stays in the deck)."),
+        GuideItem(id: "shake", symbol: "pointer.arrow.motionlines", title: "Shake to Clear", badge: "Shake",
+                  description: "Shake the pointer quickly from side to side to empty the deck."),
+        GuideItem(id: "messages", symbol: "text.bubble", title: "Pill Messages", badge: nil,
+                  description: "The pill grows to tell you what's happening, like a board being added. When a message offers a choice, click the pill for the first option or ⌥-click for the other."),
+    ]
 
-                Image(systemName: symbol)
-                    .font(.callout.weight(.medium))
-                    .foregroundColor(Color.secondary)
+    static let settingsGuide: [GuideItem] = [
+        GuideItem(id: "switch", symbol: "power", title: "CursorDeck Switch", badge: nil,
+                  description: "Pauses or resumes collecting. While paused, copies and screenshots are ignored."),
+        GuideItem(id: "filter", symbol: "line.3.horizontal.decrease", title: "Smart Filter", badge: nil,
+                  description: "Ignores shapes and text copied inside Figma, Photoshop and Illustrator, so only real images are collected."),
+        GuideItem(id: "screenshots-setting", symbol: "camera.viewfinder", title: "Screenshots", badge: nil,
+                  description: "Turn off to keep screenshots out of the pill."),
+        GuideItem(id: "shake-setting", symbol: "pointer.arrow.motionlines", title: "Shake to Clear", badge: nil,
+                  description: "Turn off if you shake the pointer while working and don't want the deck cleared."),
+        GuideItem(id: "login", symbol: "power.circle", title: "Launch at Login", badge: nil,
+                  description: "Starts CursorDeck in the menu bar when you log in."),
+        GuideItem(id: "actions", symbol: "slider.horizontal.3", title: "Action Bar", badge: nil,
+                  description: "Buttons for Copy All, Grid Preview and Clear."),
+        GuideItem(id: "menu", symbol: "menubar.rectangle", title: "Quick Menu", badge: "Right-click",
+                  description: "Right-click the menu bar icon to copy, clear, pause, check for updates or quit without opening this panel."),
+        GuideItem(id: "privacy", symbol: "lock", title: "Privacy", badge: nil,
+                  description: "Copies from password managers are ignored. Images stay in a private temporary folder, never in your own folders, and the deck empties when you quit."),
+    ]
+
+    /// Expand/collapse motion for a guide row; a plain fade when Reduce Motion is on.
+    private var rowAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.86)
+    }
+
+    private func instructionRow(_ item: GuideItem, proxy: ScrollViewProxy) -> some View {
+        let isExpanded = expandedGuideItem == item.id
+        let isHovered = hoveredGuideItem == item.id
+
+        return Button(action: {
+            withAnimation(rowAnimation) {
+                expandedGuideItem = isExpanded ? nil : item.id
             }
-            .padding(.top, 1)
+            // Bring an opened row near the bottom fully into view once it has grown.
+            if !isExpanded {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(rowAnimation) { proxy.scrollTo(item.id) }
+                }
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .center, spacing: 10) {
+                    // Liquid Glass icon badge (Golden Gate token style)
+                    ZStack {
+                        Circle()
+                            .fill(Color.primary.opacity(0.08))
+                            .frame(width: 25, height: 25)
 
-            VStack(alignment: .leading, spacing: 2.5) {
-                HStack(alignment: .center, spacing: 4) {
-                    Text(title)
+                        Circle()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.18), Color.white.opacity(0.04)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                lineWidth: 0.5
+                            )
+                            .frame(width: 25, height: 25)
+
+                        Image(systemName: item.symbol)
+                            .font(.callout.weight(.medium))
+                            .foregroundColor(Color.secondary)
+                    }
+
+                    Text(item.title)
                         .font(.callout.weight(.medium))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
 
-                    if let badge = badge {
+                    if let badge = item.badge {
                         KeycapBadgeView(badge)
                     }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.secondary.opacity(isHovered || isExpanded ? 0.9 : 0.5))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
 
-                Text(description)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineSpacing(2)
+                if isExpanded {
+                    Text(item.description)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .lineSpacing(2)
+                        .padding(.leading, 35)   // aligns with the title, past the icon
+                        .padding(.bottom, 2)
+                        .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(isHovered || isExpanded ? Color.primary.opacity(isHovered ? 0.065 : 0.04) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id(item.id)
+        .onHover { inside in
+            withAnimation(.easeOut(duration: 0.12)) {
+                if inside {
+                    hoveredGuideItem = item.id
+                } else if hoveredGuideItem == item.id {
+                    hoveredGuideItem = nil
+                }
             }
         }
-        .padding(.vertical, 2.5)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.title)
+        .accessibilityValue(isExpanded ? item.description : "")
+        .accessibilityHint(isExpanded ? "Hides the explanation" : "Shows how it works")
     }
 
     // MARK: - Divider

@@ -4,6 +4,8 @@
 
 import Foundation
 import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 
 public final class DeckQueueManager {
     public private(set) var items: [DeckItem] = []
@@ -187,6 +189,96 @@ public final class DeckQueueManager {
             print("[DeckQueueManager] Failed to copy item from \(existingFileURL): \(error)")
             return nil
         }
+    }
+
+    // MARK: - Background import
+
+    /// Serial, so items keep the order they were copied in.
+    private let importQueue = DispatchQueue(label: "com.cursordeck.import", qos: .userInitiated)
+    private static let convertToPNG: Set<String> = ["heic", "heif", "tiff", "tif", "bmp"]
+
+    /// Adds files without blocking the main thread, where the pill animates (a big HEIC/TIFF used to freeze it for up
+    /// to a second). HEIC/TIFF/BMP → PNG conversion (rotation applied) and copying run in the background; items are
+    /// added on the main queue in the given order. `completion` (main queue) gets the items that were added.
+    public func addFiles(_ urls: [URL], completion: (([DeckItem]) -> Void)? = nil) {
+        guard !urls.isEmpty else { completion?([]); return }
+        let dir = sessionDirectory, firstIndex = items.count + 1
+        importQueue.async { [weak self] in
+            let prepared = urls.enumerated().compactMap { i, url in Self.importFile(url, into: dir, index: firstIndex + i) }
+            DispatchQueue.main.async { self?.commit(prepared, preparedIn: dir, completion: completion) }
+        }
+    }
+
+    /// Same for image data that must become PNG first (e.g. TIFF from the clipboard).
+    public func addConvertingToPNG(_ data: Data, completion: ((DeckItem?) -> Void)? = nil) {
+        let dir = sessionDirectory, index = items.count + 1
+        importQueue.async { [weak self] in
+            var prepared: [PreparedFile] = []
+            if let png = CGImageSourceCreateWithData(data as CFData, nil).flatMap(Self.pngData(from:)),
+               let file = Self.write(png, ext: "png", into: dir, index: index, originalName: nil) {
+                prepared.append(file)
+            }
+            DispatchQueue.main.async {
+                self?.commit(prepared, preparedIn: dir) { completion?($0.first) }
+            }
+        }
+    }
+
+    private struct PreparedFile { let url: URL; let size: Int; let originalName: String? }
+
+    private func commit(_ prepared: [PreparedFile], preparedIn dir: URL, completion: (([DeckItem]) -> Void)?) {
+        // The deck was cleared while these were being prepared: they belong to the old session, drop them.
+        guard sessionDirectory == dir else {
+            prepared.forEach { try? FileManager.default.removeItem(at: $0.url) }
+            completion?([])
+            return
+        }
+        let added = prepared.map { DeckItem(type: .image, fileURL: $0.url, originalFileName: $0.originalName, dataSize: $0.size) }
+        guard !added.isEmpty else { completion?([]); return }
+        items += added
+        added.forEach { DeckThumbnailCache.shared.prewarm($0.fileURL) }
+        notifyObservers()
+        completion?(added)
+    }
+
+    /// Background queue only. Converts HEIC/TIFF/BMP to PNG, copies everything else as-is.
+    private static func importFile(_ source: URL, into dir: URL, index: Int) -> PreparedFile? {
+        let ext = source.pathExtension.lowercased()
+        if convertToPNG.contains(ext) {
+            guard let png = CGImageSourceCreateWithURL(source as CFURL, nil).flatMap(pngData(from:)) else { return nil }
+            return write(png, ext: "png", into: dir, index: index, originalName: source.lastPathComponent)
+        }
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let target = dir.appendingPathComponent("item_\(index)_\(UUID().uuidString.prefix(6)).\(ext.isEmpty ? "png" : ext)")
+        guard (try? FileManager.default.copyItem(at: source, to: target)) != nil else { return nil }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        let size = (try? FileManager.default.attributesOfItem(atPath: target.path)[.size] as? Int) ?? 0
+        return PreparedFile(url: target, size: size, originalName: source.lastPathComponent)
+    }
+
+    private static func write(_ data: Data, ext: String, into dir: URL, index: Int, originalName: String?) -> PreparedFile? {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let target = dir.appendingPathComponent("item_\(index)_\(UUID().uuidString.prefix(6)).\(ext)")
+        guard (try? data.write(to: target, options: .atomic)) != nil else { return nil }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        return PreparedFile(url: target, size: data.count, originalName: originalName)
+    }
+
+    /// Full-size PNG with the EXIF rotation applied (iPhone photos store rotation as metadata, which many apps that
+    /// receive a PNG ignore), via ImageIO, which is safe off the main thread.
+    static func pngData(from source: CGImageSource) -> Data? {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int, let h = props[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,   // apply rotation
+            kCGImageSourceThumbnailMaxPixelSize: max(w, h)      // full size
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, nil)
+        return CGImageDestinationFinalize(dest) ? out as Data : nil
     }
 
     @discardableResult

@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "1.3.0"
+    public static let currentVersion = "1.3.1"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "cursor-deck"
 
@@ -76,6 +76,7 @@ public final class UpdateManager {
         let cleanCurrentVersion = UpdateManager.currentVersion.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
 
         let isNewer = compareVersions(cleanRemoteVersion, cleanCurrentVersion) > 0
+        if isNewer || userInitiated { log("check: latest on GitHub is \(cleanRemoteVersion), newer: \(isNewer)") }
 
         if !isNewer {
             if userInitiated {
@@ -159,6 +160,7 @@ public final class UpdateManager {
         alert.addButton(withTitle: "Later")
 
         let response = present(alert)
+        log("prompt for \(remoteVersion): \(response == .alertFirstButtonReturn ? "Update Now" : "Later")")
         if response == .alertFirstButtonReturn {
             UserDefaults.standard.removeObject(forKey: "CursorDeck_snoozedVersion")
             if let downloadURL = downloadURL {
@@ -219,6 +221,7 @@ public final class UpdateManager {
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.log(stagedURL != nil ? "download ok" : "download FAILED: \(failure ?? "unknown error")")
                 guard let stagedURL = stagedURL else {
                     self.showAlert(
                         title: "Update failed",
@@ -265,6 +268,7 @@ public final class UpdateManager {
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.log(problem.map { "extract FAILED: \($0)" } ?? "extract ok")
                 if let problem = problem {
                     try? fm.removeItem(at: tempExtractDir)   // AUDIT: failed updates used to leave these behind
                     try? fm.removeItem(at: downloadedFile)
@@ -303,9 +307,13 @@ public final class UpdateManager {
         let currentPID = ProcessInfo.processInfo.processIdentifier
 
         if !fm.isWritableFile(atPath: destinationPath) {
-            // Requires admin privileges to overwrite a root-owned /Applications bundle (unchanged behaviour,
-            // only the quoting is now correct for paths containing quotes or spaces).
-            let script = "rm -rf \(shellQuote(destinationPath)) && cp -R \(shellQuote(appURL.path)) \(shellQuote(destinationPath)) && xattr -cr \(shellQuote(destinationPath)) && open \(shellQuote(destinationPath))"
+            // Root-owned bundle (e.g. installed by the old .pkg): needs an admin password once.
+            // The admin step ONLY swaps the files (staged, so a failed copy leaves the old app) and gives the bundle
+            // back to the user, so future updates are passwordless again. The relaunch then runs as the user, after
+            // this process exits; it used to run `open` as root while the old app was still running.
+            log("swap: app is not writable, asking for administrator permission")
+            let dest = shellQuote(destinationPath), staged = shellQuote(destinationPath + ".cursordeck-new")
+            let script = "rm -rf \(staged) && /usr/bin/ditto \(shellQuote(appURL.path)) \(staged) && rm -rf \(dest) && mv \(staged) \(dest) && /usr/sbin/chown -R \(shellQuote(NSUserName())):staff \(dest) && /usr/bin/xattr -cr \(dest)"
             let escaped = script
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "\"", with: "\\\"")
@@ -314,9 +322,21 @@ public final class UpdateManager {
             if let appleScript = NSAppleScript(source: appleScriptSource) {
                 appleScript.executeAndReturnError(&errorDict)
                 if errorDict == nil {
+                    log("swap: admin copy ok, bundle now owned by \(NSUserName())")
+                    let relaunch = "PID=\"$1\"; DEST=\"$2\"; LOG=\"$3\"\n"
+                        + "log() { echo \"$(date '+%Y-%m-%dT%H:%M:%S') swap: $*\" >> \"$LOG\"; }\n"
+                        + "i=0; while kill -0 \"$PID\" 2>/dev/null; do i=$((i + 1)); [ \"$i\" -gt 600 ] && exit 1; sleep 0.1; done\n"
+                        + Self.relaunchShell
+                    let relauncher = Process()
+                    relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    relauncher.arguments = ["-c", relaunch, "sh", "\(currentPID)", destinationPath, Self.logURL.path]
+                    try? relauncher.run()
+                    try? fm.removeItem(at: tempExtractDir)
+                    try? fm.removeItem(at: downloadedFile)
                     NSApplication.shared.terminate(nil)
                     return
                 }
+                log("swap: administrator permission not granted (\(errorDict?["NSAppleScriptErrorMessage"] ?? "cancelled"))")
             }
             // AUDIT: if the password prompt was cancelled the old code FELL THROUGH to the non-admin swap
             // below, which tries `rm -rf` on a root-owned bundle: it can delete part of the installed app and
@@ -337,13 +357,16 @@ public final class UpdateManager {
         // the old one first and the old one is only removed after the new one is in place, with rollback.
         // Previously `rm -rf` ran BEFORE `cp -R`, so a failed copy (disk full, etc.) left no app at all.
         let swapScript = """
-        PID="$1"; NEW="$2"; DEST="$3"; TMP="$4"; ZIP="$5"
+        PID="$1"; NEW="$2"; DEST="$3"; TMP="$4"; ZIP="$5"; LOG="$6"
+        log() { echo "$(date '+%Y-%m-%dT%H:%M:%S') swap: $*" >> "$LOG"; }
+        log "waiting for CursorDeck (pid $PID) to quit"
         i=0
         while kill -0 "$PID" 2>/dev/null; do
             i=$((i + 1))
             [ "$i" -gt 600 ] && exit 1
             sleep 0.1
         done
+        log "quit; swapping in the new version"
         STAGE="$DEST.cursordeck-new"
         OLD="$DEST.cursordeck-old"
         rm -rf "$STAGE" "$OLD"
@@ -351,26 +374,31 @@ public final class UpdateManager {
             if mv "$DEST" "$OLD"; then
                 if mv "$STAGE" "$DEST"; then
                     rm -rf "$OLD"
+                    log "swap ok"
                 else
                     mv "$OLD" "$DEST"
                     rm -rf "$STAGE"
+                    log "swap FAILED moving the new app in; old version restored"
                 fi
             else
                 rm -rf "$STAGE"
+                log "swap FAILED moving the old app aside; old version kept"
             fi
         else
             rm -rf "$STAGE"
+            log "swap FAILED copying the new app; old version kept"
         fi
         xattr -cr "$DEST" 2>/dev/null || true
-        open "$DEST"
         rm -rf "$TMP" "$ZIP"
-        """
+        """ + "\n" + Self.relaunchShell
 
         let relauncher = Process()
         relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relauncher.arguments = ["-c", swapScript, "sh", "\(currentPID)", appURL.path, destinationPath, tempExtractDir.path, downloadedFile.path]
+        relauncher.arguments = ["-c", swapScript, "sh", "\(currentPID)", appURL.path, destinationPath,
+                                tempExtractDir.path, downloadedFile.path, Self.logURL.path]
         do {
             try relauncher.run()
+            log("swap script started; quitting so it can replace the app")
             NSApplication.shared.terminate(nil)
         } catch {
             try? fm.removeItem(at: tempExtractDir)
@@ -391,6 +419,48 @@ public final class UpdateManager {
             showAlert(title: "Update couldn't be installed", message: "Failed to launch package installer: \(error.localizedDescription)", button: "OK")
         }
     }
+
+    // MARK: - Update log
+
+    /// `~/Library/Logs/CursorDeck/update.log`: every step of an update, from the check to the relaunch, so a failed
+    /// update can be diagnosed from the user's Mac (it couldn't be reproduced locally). Capped at ~200 KB.
+    static let logURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/CursorDeck/update.log")
+
+    func log(_ message: String) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: Self.logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let size = (try? fm.attributesOfItem(atPath: Self.logURL.path)[.size] as? Int), size > 200_000 {
+            try? fm.removeItem(at: Self.logURL)
+        }
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "\(stamp) app \(Self.currentVersion): \(message)\n"
+        if let handle = try? FileHandle(forWritingTo: Self.logURL) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? line.write(to: Self.logURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    /// Shell lines (sh) that log with `log`, then open "$DEST" and confirm CursorDeck is running again, retrying up
+    /// to 3 times (macOS can briefly fail to open an app whose files were just swapped).
+    private static let relaunchShell = """
+    log "relaunching $DEST"
+    attempt=1
+    while [ "$attempt" -le 3 ]; do
+        if out=$(/usr/bin/open "$DEST" 2>&1); then log "open #$attempt ok"; else log "open #$attempt failed: $out"; fi
+        j=0
+        while [ "$j" -lt 30 ]; do
+            if /usr/bin/pgrep -f "$DEST/Contents/MacOS/" >/dev/null; then log "CursorDeck is running again"; exit 0; fi
+            j=$((j + 1)); sleep 0.1
+        done
+        log "not running 3s after open #$attempt"
+        attempt=$((attempt + 1))
+    done
+    log "GAVE UP relaunching: the user has to open CursorDeck manually"
+    """
 
     private func showAlert(title: String, message: String, button: String) {
         let alert = NSAlert()

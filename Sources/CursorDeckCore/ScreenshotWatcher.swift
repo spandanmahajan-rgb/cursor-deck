@@ -135,7 +135,7 @@ public final class ScreenshotWatcher {
                 DispatchQueue.main.async {
                     guard !self.isPaused else { return }
                     print("[ScreenshotWatcher] Captured new screenshot: \(filename) (\(size) bytes)")
-                    self.queueManager.add(existingFileURL: url)
+                    self.queueManager.addFiles([url])   // HEIC/TIFF screenshots convert off the main thread
                 }
             } else if attempt < 15 {
                 self.ingestWhenReady(url: url, filename: filename, attempt: attempt + 1, lastSize: size)

@@ -362,29 +362,23 @@ public final class BoardImportController {
             name: board.name, pinCount: board.pinCount, cap: Self.pinCap,
             addAll: { [weak self, weak model] in
                 guard let self = self, let model = model else { return }
-                self.hudPanel.dismissNotice()
+                // Turn the offer straight into progress (no collapse in between while the pins load).
+                self.hudPanel.show(.boardPreparing(name: board.name))
                 model.loadNextBatch { [weak self] in self?.addMissing(from: model) }
             },
             choose: choose
         )
 
-        // Never added from this board: offer straight away (the first pins prefetch meanwhile).
-        guard !pinsInDeck(board).isEmpty else {
-            model.loadNextBatch()
+        // Decide instantly from what we already know (no network wait): if the deck already holds as many of this
+        // board's pins as "⌘-click adds all" would add, it's already added. Pinterest's count includes a few
+        // hidden pins (48 reported, 45 served), hence the small margin. The first pins prefetch meanwhile.
+        model.loadNextBatch()
+        let alreadyIn = pinsInDeck(board).count
+        let fullAdd = min(board.pinCount, Self.pinCap)
+        if alreadyIn > 0 && alreadyIn >= fullAdd - min(5, fullAdd / 10) {
+            hudPanel.show(.boardAlreadyAdded(name: board.name, choose: choose))
+        } else {
             hudPanel.show(offerNotice)
-            return
-        }
-        // Some of it is already in the deck: check the first pins before deciding what to say.
-        model.loadNextBatch { [weak self, weak model] in
-            guard let self = self, let model = model else { return }
-            let inDeck = self.pinsInDeck(board)
-            model.setPinsInDeck(inDeck)
-            let firstPins = model.pins.prefix(Self.pinCap)
-            if !firstPins.isEmpty && firstPins.allSatisfy({ inDeck.contains($0.id) }) {
-                self.hudPanel.show(.boardAlreadyAdded(name: board.name, choose: choose))
-            } else {
-                self.hudPanel.show(offerNotice)
-            }
         }
     }
 
@@ -464,6 +458,7 @@ public final class BoardImportController {
         switch error {
         case .rateLimited(let retry): return .pinterestRateLimited(retryAfter: retry)
         case .notFound: return .boardNotFound()
+        case .privateProfile: return .boardOnPrivateProfile()
         case .offline: return .pinterestUnreachable()
         case .unexpected: return .pinterestUnexpected()
         }

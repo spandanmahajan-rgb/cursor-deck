@@ -42,6 +42,9 @@ public enum PinterestError: Error, Equatable {
     case rateLimited(retryAfter: TimeInterval?)
     /// Secret or deleted board (logged-out requests can't tell the difference).
     case notFound
+    /// The board's owner has a private profile: Pinterest hides all their boards (even public ones) from
+    /// logged-out visitors, and CursorDeck is always logged out.
+    case privateProfile
     case offline
     case unexpected
 }
@@ -100,8 +103,16 @@ public final class PinterestBoardResolver {
     public func fetchBoard(username: String, slug: String,
                            completion: @escaping (Result<PinterestBoard, PinterestError>) -> Void) {
         let options: [String: Any] = ["username": username, "slug": slug, "field_set_key": "detailed"]
+        // Strong capture on purpose: the closure belongs to the URL task (no retain cycle), and a resolver created
+        // just for this lookup must live until the follow-up profile check is done.
         request("BoardResource", sourcePath: "/\(username)/\(slug)/", options: options) { result in
             switch result {
+            case .failure(.notFound):
+                // "Not found" also happens for public boards on a private profile; check which, so the
+                // message points at the real reason instead of "secret or deleted".
+                self.isPrivateProfile(username: username) { isPrivate in
+                    completion(.failure(isPrivate ? .privateProfile : .notFound))
+                }
             case .failure(let error):
                 completion(.failure(error))
             case .success(let body):
@@ -115,6 +126,20 @@ public final class PinterestBoardResolver {
                 let count = (data["pin_count"] as? NSNumber)?.intValue ?? 0
                 completion(.success(PinterestBoard(id: id, name: name, pinCount: count, username: username, slug: slug)))
             }
+        }
+    }
+
+    /// Whether `username` has a private profile (verified on a real account: Pinterest returns a stub user
+    /// with `is_private_profile: true` and none of its boards). Errors count as "not private".
+    private func isPrivateProfile(username: String, completion: @escaping (Bool) -> Void) {
+        let options: [String: Any] = ["username": username, "field_set_key": "profile"]
+        request("UserResource", sourcePath: "/\(username)/", options: options) { result in
+            guard case .success(let body) = result,
+                  let data = (body["resource_response"] as? [String: Any])?["data"] as? [String: Any] else {
+                completion(false)
+                return
+            }
+            completion(data["is_private_profile"] as? Bool == true)
         }
     }
 

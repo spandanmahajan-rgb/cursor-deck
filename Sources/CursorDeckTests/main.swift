@@ -4,6 +4,7 @@
 
 import Foundation
 import AppKit
+import ImageIO
 import CursorDeckCore
 
 func createMockPNGData() -> Data {
@@ -258,6 +259,9 @@ func testPillNoticeWording() {
         .contains("first 100") == true, "Big boards must say only the first 100 are added")
     assert(PillNotice.boardAdded(added: 45, requested: 48, name: "Refs").tone == .warning)
     assert(PillNotice.boardAdded(added: 3, requested: 3, name: "Refs").duration == 2, "Plain confirmation is brief")
+    let prep = PillNotice.boardPreparing(name: "Refs")
+    assert(prep.duration == nil && prep.message.hasPrefix("Adding from"), "⌘-click turns the offer into progress that stays until done")
+    assert(PillNotice.boardOnPrivateProfile().message == "This board is on a private profile")
     let again = PillNotice.boardAlreadyAdded(name: "Refs", choose: {})
     assert(again.message == "“Refs” is already in the deck" && again.alternateAction != nil && again.primaryAction == nil,
            "Re-copied board: says so, ⌥-click still opens the picker, ⌘-click adds nothing")
@@ -316,6 +320,53 @@ func testPillNoticeShowsAndHides() {
     print("✅ testPillNoticeShowsAndHides passed!")
 }
 
+func testScreenshotOverlayDetection() {
+    print("Running testScreenshotOverlayDetection...")
+    // Seen on macOS 27 while taking ⌘⇧4 / ⌘⇧5 screenshots (window owner, layer)
+    assert(CursorHUDPanel.isScreenshotWindow(ownerName: "screencapture", bundleID: nil, layer: 1498), "⌘⇧4 selection overlay")
+    assert(CursorHUDPanel.isScreenshotWindow(ownerName: "Bildschirmfoto", bundleID: "com.apple.screencaptureui", layer: 1499),
+           "⌘⇧5 toolbar, matched by bundle id whatever the language")
+    assert(!CursorHUDPanel.isScreenshotWindow(ownerName: "Screenshot", bundleID: "com.apple.screencaptureui", layer: 24),
+           "The post-capture thumbnail (low layer) is not the overlay")
+    assert(!CursorHUDPanel.isScreenshotWindow(ownerName: "Google Chrome", bundleID: "com.google.Chrome", layer: 0))
+    assert(!CursorHUDPanel.isScreenshotWindow(ownerName: "Dock", bundleID: "com.apple.dock", layer: 20))
+    print("✅ testScreenshotOverlayDetection passed!")
+}
+
+func testBackgroundImport() {
+    print("Running testBackgroundImport...")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cd-import-test-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    // 40x20 image saved as HEIC with "rotate 90°" stored as metadata (like an iPhone photo), plus a TIFF and a PNG.
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 40, pixelsHigh: 20, bitsPerSample: 8, samplesPerPixel: 4,
+                               hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    let heic = dir.appendingPathComponent("photo.heic"), tiff = dir.appendingPathComponent("scan.tiff"), png = dir.appendingPathComponent("plain.png")
+    let dest = CGImageDestinationCreateWithURL(heic as CFURL, "public.heic" as CFString, 1, nil)!
+    CGImageDestinationAddImage(dest, rep.cgImage!, [kCGImagePropertyOrientation: 6] as CFDictionary)
+    assert(CGImageDestinationFinalize(dest), "test HEIC written")
+    try! rep.tiffRepresentation!.write(to: tiff)
+    try! rep.representation(using: .png, properties: [:])!.write(to: png)
+
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    var added: [DeckItem]?
+    let returnedAt = CACurrentMediaTime()
+    queueManager.addFiles([heic, tiff, png]) { added = $0 }
+    assert(added == nil, "Import must not finish synchronously (it runs off the main thread)")
+    _ = returnedAt
+    let deadline = Date().addingTimeInterval(10)
+    while added == nil && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+    guard let items = added else { fatalError("Background import timed out") }
+    assert(items.count == 3 && queueManager.count == 3, "All three files added")
+    assert(items.map { $0.fileURL.pathExtension } == ["png", "png", "png"], "HEIC and TIFF become PNG; order kept")
+    assert(items.map { $0.originalFileName } == ["photo.heic", "scan.tiff", "plain.png"], "Copy order is preserved")
+    let first = CGImageSourceCreateWithURL(items[0].fileURL as CFURL, nil).flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) } as? [CFString: Any]
+    assert(first?[kCGImagePropertyPixelWidth] as? Int == 20 && first?[kCGImagePropertyPixelHeight] as? Int == 40,
+           "Phone-photo rotation is applied (40x20 rotated 90° → 20x40)")
+    print("✅ testBackgroundImport passed!")
+}
+
 func testPinterestLiveBoard() {
     print("Running testPinterestLiveBoard...")
     let sem = DispatchSemaphore(value: 0)
@@ -348,6 +399,12 @@ func testPinterestLiveBoard() {
     _ = sem.wait(timeout: .now() + 20)
     if case .failure(.rateLimited)? = missing { print("   ⚠️ rate-limited; skipping not-found check") }
     else { assert(missing == .failure(.notFound), "A missing board must report notFound, got \(String(describing: missing))") }
+    // A public board on a PRIVATE profile (a real friend's account): must say "private profile", not "secret or deleted".
+    var privateResult: Result<PinterestBoard, PinterestError>?
+    PinterestBoardResolver().fetchBoard(username: "apurvasavadi03", slug: "prakrutisaar") { privateResult = $0; sem.signal() }
+    _ = sem.wait(timeout: .now() + 20)
+    if case .failure(.rateLimited)? = privateResult { print("   ⚠️ rate-limited; skipping private-profile check") }
+    else { assert(privateResult == .failure(.privateProfile), "Board on a private profile must report privateProfile, got \(String(describing: privateResult))") }
     print("✅ testPinterestLiveBoard passed!")
 }
 
@@ -387,5 +444,7 @@ testPinterestBoardURLDetection()
 testPillNoticeWording()
 testBoardPickerSelection()
 testPillNoticeShowsAndHides()
+testScreenshotOverlayDetection()
+testBackgroundImport()
 testPinterestLiveBoard()
 print("All verification tests passed successfully! 🚀\n")

@@ -251,18 +251,20 @@ public final class ClipboardWatcher {
         // 2. Finder file paths (NSFilenamesPboardType)
         if let filenames = pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String], !filenames.isEmpty {
             var captured = false
+            var images: [URL] = []
             for path in filenames {
                 let url = URL(fileURLWithPath: path)
                 let ext = url.pathExtension.lowercased()
                 if supportedImageExtensions.contains(ext) && !queueManager.owns(url) {
-                    if let item = queueManager.add(existingFileURL: url) {
-                        delegate?.clipboardWatcher(self, didCaptureItem: item)
-                        captured = true
-                    }
+                    images.append(url)
                 } else if supportedVideoExtensions.contains(ext) && !queueManager.owns(url) {
                     handleLocalVideoFile(url)
                     captured = true
                 }
+            }
+            if !images.isEmpty {
+                addFilesInBackground(images)
+                captured = true
             }
             if captured {
                 lastProcessedChangeCount = changeCount
@@ -274,17 +276,19 @@ public final class ClipboardWatcher {
         // 3. File URLs (NSURL)
         if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
             var captured = false
+            var images: [URL] = []
             for url in fileURLs {
                 let ext = url.pathExtension.lowercased()
                 if supportedImageExtensions.contains(ext) && !queueManager.owns(url) {
-                    if let item = queueManager.add(existingFileURL: url) {
-                        delegate?.clipboardWatcher(self, didCaptureItem: item)
-                        captured = true
-                    }
+                    images.append(url)
                 } else if supportedVideoExtensions.contains(ext) && !queueManager.owns(url) {
                     handleLocalVideoFile(url)
                     captured = true
                 }
+            }
+            if !images.isEmpty {
+                addFilesInBackground(images)
+                captured = true
             }
             if captured {
                 lastProcessedChangeCount = changeCount
@@ -296,13 +300,18 @@ public final class ClipboardWatcher {
         // 4-7. Raw image data, in priority order: PNG, JPEG, TIFF (stored as PNG), WebP, GIF
         for (types, ext) in Self.rawImageFlavors {
             for t in types {
-                guard var data = pasteboard.data(forType: t), !data.isEmpty else { continue }
+                guard let data = pasteboard.data(forType: t), !data.isEmpty else { continue }
                 if ext == "tiff" {
-                    guard let rep = NSBitmapImageRep(data: data),
-                          let png = rep.representation(using: .png, properties: [:]), !png.isEmpty else { continue }
-                    data = png
+                    // Cheap header check here (an unreadable TIFF still falls through to the next flavour);
+                    // the slow TIFF → PNG conversion runs in the background so big images don't freeze the pill.
+                    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                          CGImageSourceGetCount(source) > 0 else { continue }
+                    convertToPNGInBackground(data)
+                    lastProcessedChangeCount = changeCount
+                    cancelPendingRetries()
+                    return true
                 }
-                if let item = queueManager.add(imageData: data, extension: ext == "tiff" ? "png" : ext) {
+                if let item = queueManager.add(imageData: data, extension: ext) {
                     delegate?.clipboardWatcher(self, didCaptureItem: item)
                     lastProcessedChangeCount = changeCount
                     cancelPendingRetries()
@@ -334,18 +343,12 @@ public final class ClipboardWatcher {
         }
 
         // 9. Universal fallback: NSImage instantiation
-        if let image = NSImage(pasteboard: pasteboard), image.size.width > 1, image.size.height > 1 {
-            if let tiffData = image.tiffRepresentation,
-               let imageRep = NSBitmapImageRep(data: tiffData),
-               let convertedPng = imageRep.representation(using: .png, properties: [:]),
-               !convertedPng.isEmpty {
-                if let item = queueManager.add(imageData: convertedPng, extension: "png") {
-                    delegate?.clipboardWatcher(self, didCaptureItem: item)
-                    lastProcessedChangeCount = changeCount
-                    cancelPendingRetries()
-                    return true
-                }
-            }
+        if let image = NSImage(pasteboard: pasteboard), image.size.width > 1, image.size.height > 1,
+           let tiffData = image.tiffRepresentation, !tiffData.isEmpty {
+            convertToPNGInBackground(tiffData)   // PNG encoding off the main thread
+            lastProcessedChangeCount = changeCount
+            cancelPendingRetries()
+            return true
         }
 
         return false
@@ -375,9 +378,33 @@ public final class ClipboardWatcher {
         return supportedVideoExtensions.contains(ext)
     }
 
+    /// WebM is still recognised (so the user gets an answer) but can't be converted: AVFoundation doesn't decode it
+    /// (verified on macOS 27 with a VP9 WebM). Returns true if `url` is WebM and the user was told.
+    private func rejectIfWebM(_ url: URL) -> Bool {
+        guard url.pathExtension.lowercased() == "webm" else { return false }
+        onNotice?(.webmUnsupported())
+        return true
+    }
+
     private func handleDirectVideoURL(_ string: String) {
         guard let url = URL(string: string) else { return }
+        if rejectIfWebM(url) { return }   // don't download a file we can't convert
         downloadAndConvertVideo(url)
+    }
+
+    /// Copied image files are converted/copied off the main thread (big HEIC/TIFF files used to freeze the pill).
+    private func addFilesInBackground(_ urls: [URL]) {
+        queueManager.addFiles(urls) { [weak self] items in
+            guard let self = self else { return }
+            items.forEach { self.delegate?.clipboardWatcher(self, didCaptureItem: $0) }
+        }
+    }
+
+    private func convertToPNGInBackground(_ data: Data) {
+        queueManager.addConvertingToPNG(data) { [weak self] item in
+            guard let self = self, let item = item else { return }
+            self.delegate?.clipboardWatcher(self, didCaptureItem: item)
+        }
     }
 
     private func addCaptured(_ data: Data, ext: String) {
@@ -407,6 +434,7 @@ public final class ClipboardWatcher {
     }
 
     private func handleLocalVideoFile(_ url: URL) {
+        if rejectIfWebM(url) { return }
         let gen = generation
         // convert() completes on the main queue (the original re-dispatched to main a second time)
         VideoToGIFConverter.shared.convert(videoURL: url) { [weak self] gifData, _ in

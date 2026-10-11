@@ -135,11 +135,81 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.trackingTimer = timer
+        startScreenshotWatch()
     }
 
     public func stopTracking() {
         trackingTimer?.invalidate()
         trackingTimer = nil
+        stopScreenshotWatch()
+    }
+
+    // MARK: - Screenshots
+
+    // The pill sits next to the cursor, so it used to land in ⌘⇧4 / ⌘⇧5 screenshots. While macOS's screenshot
+    // overlay is on screen (a full-screen window owned by `screencapture`, there before the image is taken), the
+    // pill fades out and is excluded from capture; it comes back when the overlay closes. Detected from window
+    // owner names, which need no permission. Outside screenshots the pill stays visible, including in screen
+    // sharing and recordings (demos). ⌘⇧3 can't be caught: it captures before any overlay appears.
+    private var screenshotTimer: Timer?
+    private var isHiddenForScreenshot = false
+    private var screenshotOverlayGoneAt: CFTimeInterval?
+
+    private func startScreenshotWatch() {
+        guard screenshotTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in self?.checkForScreenshotOverlay() }
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        screenshotTimer = timer
+    }
+
+    private func stopScreenshotWatch() {
+        screenshotTimer?.invalidate()
+        screenshotTimer = nil
+        if isHiddenForScreenshot { setHiddenForScreenshot(false) }
+    }
+
+    /// True for macOS's screenshot UI windows: the `screencapture` selection overlay and the ⌘⇧5 toolbar.
+    /// (Owner name "screencapture" is the process name, which isn't localized; the toolbar is matched by bundle id.)
+    public static func isScreenshotWindow(ownerName: String?, bundleID: String?, layer: Int) -> Bool {
+        guard layer >= 1000 else { return false }   // screenshot UI sits far above normal windows (seen: 1498/1499)
+        return ownerName == "screencapture" || bundleID == "com.apple.screencaptureui"
+    }
+
+    private func checkForScreenshotOverlay() {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+            as? [[String: Any]] ?? []
+        let overlayUp = windows.contains { window in
+            let layer = window[kCGWindowLayer as String] as? Int ?? 0
+            guard layer >= 1000 else { return false }
+            let pid = (window[kCGWindowOwnerPID as String] as? Int).map { pid_t($0) }
+            let bundleID = pid.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+            return Self.isScreenshotWindow(ownerName: window[kCGWindowOwnerName as String] as? String,
+                                           bundleID: bundleID, layer: layer)
+        }
+        if overlayUp {
+            screenshotOverlayGoneAt = nil
+            if !isHiddenForScreenshot { setHiddenForScreenshot(true) }
+        } else if isHiddenForScreenshot {
+            // Wait a moment after the overlay closes so a just-finished capture never includes the returning pill.
+            let now = CACurrentMediaTime()
+            if let goneAt = screenshotOverlayGoneAt {
+                if now - goneAt > 0.4 { setHiddenForScreenshot(false) }
+            } else {
+                screenshotOverlayGoneAt = now
+            }
+        }
+    }
+
+    private func setHiddenForScreenshot(_ hidden: Bool) {
+        isHiddenForScreenshot = hidden
+        screenshotOverlayGoneAt = nil
+        sharingType = hidden ? .none : .readOnly   // belt and braces: excluded from the capture itself
+        // The pill's *content* fades (not the window), so this never fights the picker/collapse window fades.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = hidden ? 0.08 : 0.18
+            self.hudView.animator().alphaValue = hidden ? 0 : 1
+        }
     }
 
     private func updatePosition() {

@@ -37,6 +37,8 @@ public final class DeckPreviewPanel: NSPanel {
     private var clickOutsideMonitor: Any?
     private var isClosing = false
     private var openedAt: TimeInterval = 0
+    /// True while a single thumbnail is being dragged out: the preview must not close under the drag.
+    private var isDraggingOut = false
     private let dismissDistance: CGFloat = 90.0
 
     public init() {
@@ -179,6 +181,7 @@ public final class DeckPreviewPanel: NSPanel {
             )
             // Deleting only mutates the queue; the queue observer calls refresh() once.
             cell.onDelete = { [weak self] deleted in self?.queueManager?.remove(id: deleted.id) }
+            cell.onDragOut = { [weak self] dragging in self?.isDraggingOut = dragging }
             gridView.addSubview(cell)
         }
     }
@@ -265,7 +268,7 @@ public final class DeckPreviewPanel: NSPanel {
 
     /// Called every ~16ms from CursorHUDPanel's tracking timer: dismiss if the cursor wanders off.
     public func tick() {
-        guard isVisible, !isClosing else { return }
+        guard isVisible, !isClosing, !isDraggingOut else { return }
         if CACurrentMediaTime() - openedAt < 0.35 { return }
         let mouse = NSEvent.mouseLocation
         if !frame.insetBy(dx: -dismissDistance, dy: -dismissDistance).contains(mouse) {
@@ -310,7 +313,7 @@ public final class DeckPreviewPanel: NSPanel {
         clickOutsideMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
-            guard let self = self else { return }
+            guard let self = self, !self.isDraggingOut else { return }
             if CACurrentMediaTime() - self.openedAt < 0.15 { return }
             self.close()
         }
@@ -337,11 +340,15 @@ final class FirstMouseButton: NSButton {
 }
 
 /// One deck item: a square, aspect-filled thumbnail (like the board picker's tiles). Hover shows a remove button.
-final class PreviewThumbnailCell: NSView {
+/// Drag a thumbnail out to drop just that image somewhere; it stays in the deck.
+final class PreviewThumbnailCell: NSView, NSDraggingSource {
     let item: DeckItem
     private let position: Int
     private let total: Int
     var onDelete: ((DeckItem) -> Void)?
+    /// true when a drag out of this cell starts, false when it ends.
+    var onDragOut: ((Bool) -> Void)?
+    private var mouseDownPoint: NSPoint?
 
     private let imageLayer = CALayer()
     private let deleteButton = FirstMouseButton()
@@ -382,6 +389,8 @@ final class PreviewThumbnailCell: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.image)
         setAccessibilityLabel("Image \(position) of \(total)")
+        setAccessibilityHelp("Drag to drop just this image. It stays in the deck.")
+        toolTip = "Drag to drop just this image"
 
         if item.fileURL.pathExtension.lowercased() == "gif" {
             let tag = Self.badgeLabel("GIF")
@@ -438,6 +447,38 @@ final class PreviewThumbnailCell: NSView {
     }
 
     @objc private func deleteClicked() { onDelete?(item) }
+
+    // MARK: Drag one image out
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownPoint = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = mouseDownPoint else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - start.x, point.y - start.y) > 4 else { return }
+        mouseDownPoint = nil
+
+        let dragItem = NSDraggingItem(pasteboardWriter: item.fileURL as NSURL)
+        let image = (imageLayer.contents as? NSImage) ?? NSWorkspace.shared.icon(forFile: item.fileURL.path)
+        dragItem.setDraggingFrame(bounds, contents: image)
+        let session = beginDraggingSession(with: [dragItem], event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+        // Same extra flavour the pill's drag adds, for apps like WhatsApp that read the legacy file list.
+        session.draggingPasteboard.setPropertyList([item.fileURL.path], forType: .init("NSFilenamesPboardType"))
+        onDragOut?(true)
+    }
+
+    override func mouseUp(with event: NSEvent) { mouseDownPoint = nil }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        .copy   // a copy: the image stays in the deck
+    }
+
+    func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        onDragOut?(false)
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
