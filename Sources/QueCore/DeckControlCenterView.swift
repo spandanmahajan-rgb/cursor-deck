@@ -340,9 +340,7 @@ public struct DeckControlCenterView: View {
                 get: { !state.isTrackingPaused },
                 set: { _ in state.toggleTracking() }
             ))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
+            .toggleStyle(MenuSwitchStyle())
             .accessibilityHint(statusSubtitle)   // keeps VoiceOver's own on/off value
         }
     }
@@ -351,11 +349,9 @@ public struct DeckControlCenterView: View {
         if state.isTrackingPaused {
             return "Paused"
         } else if state.itemCount == 0 {
-            return "Copy an image to start"
-        } else if state.itemCount == 1 {
-            return "1 item ready"
+            return "Waiting for its first image"
         } else {
-            return "\(state.itemCount) items ready"
+            return "\(state.itemCount) in Que"
         }
     }
 
@@ -418,11 +414,9 @@ public struct DeckControlCenterView: View {
             .onTapGesture(perform: action)
             .accessibilityHidden(true)   // the switch carries the label and on/off value for VoiceOver
 
-            // Real macOS switch: VoiceOver reads on/off, Space toggles it, follows the system style
+            // macOS-style switch (see MenuSwitchStyle): VoiceOver reads on/off
             Toggle(title, isOn: Binding(get: { isOn }, set: { _ in action() }))
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
+                .toggleStyle(MenuSwitchStyle())
         }
         .padding(.horizontal, 6)
         .frame(height: 32)
@@ -879,3 +873,38 @@ public struct KeycapBadgeView: View {
     }
 }
 
+
+// MARK: - Menu switch
+
+/// The macOS mini switch, drawn by Que. The Control Center lives in a menu, and Que never becomes the active app
+/// when it opens (so it doesn't take focus from your work); AppKit then draws every system switch in its inactive grey,
+/// even when on (overriding the tint or `controlActiveState` doesn't change that). This matches the system mini switch:
+/// 26 x 15 pt capsule, accent when on, the system's translucent grey track when off, white knob with a soft shadow.
+struct MenuSwitchStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        let on = configuration.isOn
+        return ZStack(alignment: on ? .trailing : .leading) {
+            Capsule()
+                .fill(on ? Color.accentColor : Color.primary.opacity(0.12))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(on ? 0 : 0.1), lineWidth: 0.5))
+            Circle()
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.25), radius: 0.75, y: 0.5)
+                .overlay(Circle().strokeBorder(Color.black.opacity(0.06), lineWidth: 0.5))
+                .padding(1)
+        }
+        .frame(width: 26, height: 15)
+        .opacity(isEnabled ? 1 : 0.5)
+        .contentShape(Capsule())
+        .onTapGesture {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { configuration.isOn.toggle() }
+        }
+        // VoiceOver sees a real switch (label, on/off, toggle action), not the drawing.
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
+    }
+}

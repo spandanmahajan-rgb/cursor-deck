@@ -49,6 +49,7 @@ clipboardWatcher.onPinterestBoard = { username, slug in
     boardImporter.handleBoardLink(username: username, slug: slug)
 }
 clipboardWatcher.onNotice = { notice in hudPanel.show(notice) }
+clipboardWatcher.onWorkChanged = { working in hudPanel.isWorking = working }
 
 clipboardWatcher.start()
 screenshotWatcher.start()

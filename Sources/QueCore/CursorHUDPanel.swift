@@ -37,11 +37,22 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     private var targetSize: NSSize {
         if isCollapsing { return Self.dotSize }
         if let notice = notice { return hudView.preferredSize(for: notice) }
+        if isWorking && queueManager.isEmpty { return Self.dotSize }   // just the bouncing dot until the GIF lands
         return NSSize(width: badgeWidth, height: badgeHeight)
     }
 
     /// The pill is on screen while the deck has items, a notice is showing, or it is collapsing away.
-    private var isActive: Bool { !queueManager.isEmpty || notice != nil || isCollapsing }
+    private var isActive: Bool { !queueManager.isEmpty || notice != nil || isCollapsing || isWorking }
+
+    /// A video → GIF or a Pinterest pin is on its way: the dot turns grey and bounces until it lands (Que stays on
+    /// screen meanwhile, as just the dot when it's empty).
+    public var isWorking = false {
+        didSet {
+            guard isWorking != oldValue else { return }
+            hudView.isWorking = isWorking
+            refreshHUD()
+        }
+    }
 
     /// Hides the pill and stops it following the cursor (used while the board picker is open).
     public var isSuspended = false {
@@ -352,7 +363,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         // Size changes animate in updatePosition(). When appearing for a notice, start as the dot and fade in,
         // so the message grows out of it from the left; otherwise appear at full size as before.
         if !isVisible {
-            let startsAsDot = notice != nil && queueManager.isEmpty
+            let startsAsDot = (notice != nil || isWorking) && queueManager.isEmpty
             setFrame(NSRect(origin: frame.origin, size: startsAsDot ? Self.dotSize : targetSize), display: false)
             if startsAsDot && !isSuspended {
                 alphaValue = 0
@@ -412,7 +423,8 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         notice = nil
         noticeToken &+= 1
 
-        guard animated, queueManager.isEmpty, isVisible, !isSuspended else {
+        // Still working on an empty Que: shrink back to the bouncing dot instead of collapsing away.
+        guard animated, queueManager.isEmpty, !isWorking, isVisible, !isSuspended else {
             hudView.setNotice(nil)
             if queueManager.isEmpty { hudView.restoreCountInstantly() }
             refreshHUD()

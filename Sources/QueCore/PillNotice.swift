@@ -115,7 +115,7 @@ public extension PillNotice {
 
     /// Shown the moment ⌘-click lands, while the board's pins are still being listed (replaces the offer in place).
     static func boardPreparing(name: String) -> PillNotice {
-        PillNotice("Adding from “\(name)”", detail: "Getting pins…", tone: .neutral, duration: nil)
+        PillNotice("“\(name)” is joining Que", detail: "Getting pins…", tone: .neutral, duration: nil)
     }
 
     static func boardAdding(count: Int, name: String) -> PillNotice {
@@ -124,23 +124,23 @@ public extension PillNotice {
 
     /// Stays up (no timer) while pins download; updated in place as each one lands.
     static func boardAddingProgress(done: Int, total: Int, name: String) -> PillNotice {
-        PillNotice("Adding from “\(name)”", detail: "\(done) of \(total)", tone: .neutral, duration: nil)
+        PillNotice("“\(name)” is joining Que", detail: "\(done) of \(total)", tone: .neutral, duration: nil)
     }
 
     /// `alreadyInDeck`: pins of this board skipped because they were already in the deck (⌘-click add).
     static func boardAdded(added: Int, requested: Int, name: String, alreadyInDeck: Int = 0) -> PillNotice {
         let pins = { (n: Int) in n == 1 ? "1 pin" : "\(n) pins" }
         if added < requested {
-            return PillNotice("Added \(added) of \(requested) pins from “\(name)”",
+            return PillNotice("\(added) of \(requested) pins from “\(name)” joined Que",
                               detail: "\(requested - added) couldn't be downloaded.", tone: .warning, duration: 4)
         }
         if alreadyInDeck > 0 {
-            return PillNotice("Added \(added) new \(added == 1 ? "pin" : "pins") from “\(name)”",
+            return PillNotice("\(added) new \(added == 1 ? "pin" : "pins") from “\(name)” joined Que",
                               detail: "\(pins(alreadyInDeck)) \(alreadyInDeck == 1 ? "was" : "were") already in Que.",
                               tone: .success, duration: 3)
         }
         // A plain confirmation: brief, like a native macOS toast.
-        return PillNotice("Added \(pins(added)) from “\(name)”", tone: .success, duration: 2)
+        return PillNotice("\(pins(added)) from “\(name)” joined Que", tone: .success, duration: 2)
     }
 
     /// The board link was copied again and its pins are all still in the deck. ⌥-click still opens the picker.
@@ -157,5 +157,28 @@ public extension PillNotice {
 
     static func nothingDownloaded() -> PillNotice {
         PillNotice("None of the pins could be downloaded", detail: "Try again in a moment.", tone: .error, duration: 5)
+    }
+
+    // Things on their way into Que use queue verbs (joining, saving a spot, up next) but never a second noun like
+    // "line": Que is the only name for where images go. Titles stay plain; errors stay clear first.
+
+    /// A video link or file was picked up; the dot keeps bouncing (grey) until the GIF lands in Que.
+    static func makingGIF() -> PillNotice {
+        PillNotice("Making a GIF", detail: "Saving it a spot in Que.", tone: .neutral, duration: 3)
+    }
+
+    /// A Pinterest pin link, shown the moment it's copied (we only learn whether it's a video after asking
+    /// Pinterest; if it is, `makingGIF` replaces this in place).
+    static func gettingPin() -> PillNotice {
+        PillNotice("Getting this pin", detail: "It's up next.", tone: .neutral, duration: 3)
+    }
+
+    static func gifFailed() -> PillNotice {
+        PillNotice("This video couldn't join Que", detail: "Try another link, or an MP4 or MOV version.",
+                   tone: .error, duration: 5)
+    }
+
+    static func pinFailed() -> PillNotice {
+        PillNotice("This pin couldn't join Que", detail: "Copy the link again in a moment.", tone: .error, duration: 5)
     }
 }

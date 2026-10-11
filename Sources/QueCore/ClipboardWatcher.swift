@@ -21,6 +21,25 @@ public final class ClipboardWatcher {
 
     /// Messages for the user (shown inside the pill). Called on the main queue.
     public var onNotice: ((PillNotice) -> Void)?
+    /// True while any video → GIF or Pinterest pin is still on its way (the badge's dot turns grey and bounces).
+    /// Called on the main queue when that changes.
+    public var onWorkChanged: ((Bool) -> Void)?
+    private var activeJobs = 0 {
+        didSet { if (oldValue > 0) != (activeJobs > 0) { onWorkChanged?(activeJobs > 0) } }
+    }
+
+    /// Starts tracking one job. Its ticket must end with `.added`, `.failed` (shows a message) or `.cancelled` (quiet,
+    /// e.g. Que was cleared or paused meanwhile); a ticket dropped without ending counts as failed.
+    private func beginWork(isVideo: Bool) -> WorkTicket {
+        activeJobs += 1
+        if isVideo { onNotice?(.makingGIF()) }
+        return WorkTicket(isVideo: isVideo) { [weak self] outcome, isVideo in
+            guard let self = self else { return }
+            // Message first, so an empty Que shows it instead of disappearing for a moment in between.
+            if outcome == .failed { self.onNotice?(isVideo ? .gifFailed() : .pinFailed()) }
+            self.activeJobs = max(0, self.activeJobs - 1)
+        }
+    }
     /// A Pinterest board link was copied (directly or via a pin.it short link). Called on the main queue.
     public var onPinterestBoard: ((_ username: String, _ slug: String) -> Void)?
 
@@ -389,7 +408,7 @@ public final class ClipboardWatcher {
     private func handleDirectVideoURL(_ string: String) {
         guard let url = URL(string: string) else { return }
         if rejectIfWebM(url) { return }   // don't download a file we can't convert
-        downloadAndConvertVideo(url)
+        downloadAndConvertVideo(url, ticket: beginWork(isVideo: true))
     }
 
     /// Copied image files are converted/copied off the main thread (big HEIC/TIFF files used to freeze the pill).
@@ -407,26 +426,41 @@ public final class ClipboardWatcher {
         }
     }
 
-    private func addCaptured(_ data: Data, ext: String) {
-        if let item = queueManager.add(imageData: data, extension: ext) {
-            delegate?.clipboardWatcher(self, didCaptureItem: item)
-        }
+    @discardableResult
+    private func addCaptured(_ data: Data, ext: String) -> Bool {
+        guard let item = queueManager.add(imageData: data, extension: ext) else { return false }
+        delegate?.clipboardWatcher(self, didCaptureItem: item)
+        return true
+    }
+
+    /// Ends a job with the outcome of adding `data`, or quietly if Que changed meanwhile (cleared/paused).
+    private func finishJob(_ ticket: WorkTicket, gen: Int, data: Data?, ext: String) {
+        guard isCurrent(gen) else { ticket.finish(.cancelled); return }
+        guard let data = data, addCaptured(data, ext: ext) else { ticket.finish(.failed); return }
+        ticket.finish(.added)
     }
 
     private func handlePinterestURL(_ urlString: String) {
         let gen = generation
+        let ticket = beginWork(isVideo: false)   // a pin: we learn whether it's a video once it's resolved
+        onNotice?(.gettingPin())                 // say something right away, together with the bouncing dot
         PinterestMediaResolver.shared.resolveMedia(from: urlString) { [weak self] result in
             // Resolver callbacks arrive on URLSession queues; all state is touched on main only.
             DispatchQueue.main.async {
-                guard let self = self, self.isCurrent(gen), let result = result else { return }
+                guard let self = self, self.isCurrent(gen) else { ticket.finish(.cancelled); return }
+                guard let result = result else { ticket.finish(.failed); return }
                 switch result {
                 case .video(let videoRemoteURL):
-                    self.downloadAndConvertVideo(videoRemoteURL)
+                    ticket.isVideo = true
+                    self.onNotice?(.makingGIF())   // replaces "Getting this pin" in place (no re-fade)
+                    self.downloadAndConvertVideo(videoRemoteURL, ticket: ticket)
                 case .image(let imageRemoteURL):
-                    self.downloadAndAddImage(imageRemoteURL)
+                    self.downloadAndAddImage(imageRemoteURL, ticket: ticket)
                 case .board(let username, let slug):
+                    ticket.finish(.cancelled)   // boards have their own offer message
                     self.onPinterestBoard?(username, slug)
                 case .rateLimited(let retryAfter):
+                    ticket.finish(.cancelled)
                     self.onNotice?(.pinterestRateLimited(retryAfter: retryAfter))
                 }
             }
@@ -436,20 +470,21 @@ public final class ClipboardWatcher {
     private func handleLocalVideoFile(_ url: URL) {
         if rejectIfWebM(url) { return }
         let gen = generation
+        let ticket = beginWork(isVideo: true)
         // convert() completes on the main queue (the original re-dispatched to main a second time)
         VideoToGIFConverter.shared.convert(videoURL: url) { [weak self] gifData, _ in
-            guard let self = self, self.isCurrent(gen), let gifData = gifData else { return }
-            self.addCaptured(gifData, ext: "gif")
+            guard let self = self else { ticket.finish(.cancelled); return }
+            self.finishJob(ticket, gen: gen, data: gifData, ext: "gif")
         }
     }
 
-    private func downloadAndConvertVideo(_ remoteURL: URL) {
+    private func downloadAndConvertVideo(_ remoteURL: URL, ticket: WorkTicket) {
         let gen = generation
 
         if remoteURL.pathExtension.lowercased() == "m3u8" || remoteURL.absoluteString.contains(".m3u8") {
             VideoToGIFConverter.shared.convertHLS(streamURL: remoteURL) { [weak self] gifData, _ in
-                guard let self = self, self.isCurrent(gen), let gifData = gifData else { return }
-                self.addCaptured(gifData, ext: "gif")
+                guard let self = self else { ticket.finish(.cancelled); return }
+                self.finishJob(ticket, gen: gen, data: gifData, ext: "gif")
             }
             return
         }
@@ -464,27 +499,31 @@ public final class ClipboardWatcher {
             sizeObservation = nil
 
             // On any early return the system deletes tempURL for us (no orphan).
-            guard let tempURL = tempURL, error == nil else { return }
+            guard let tempURL = tempURL, error == nil else { ticket.finish(.failed); return }
             // FIX: downloadTask treats HTTP 403/404 as success and hands back the error page body.
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return }
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                ticket.finish(.failed); return
+            }
 
             let localVideoURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString + ".mp4")
             do {
                 try FileManager.default.moveItem(at: tempURL, to: localVideoURL)
             } catch {
+                ticket.finish(.failed)
                 return
             }
 
             DispatchQueue.main.async {
                 guard let self = self, self.isCurrent(gen) else {
                     try? FileManager.default.removeItem(at: localVideoURL)
+                    ticket.finish(.cancelled)
                     return
                 }
                 VideoToGIFConverter.shared.convert(videoURL: localVideoURL) { [weak self] gifData, _ in
                     try? FileManager.default.removeItem(at: localVideoURL)
-                    guard let self = self, self.isCurrent(gen), let gifData = gifData else { return }
-                    self.addCaptured(gifData, ext: "gif")
+                    guard let self = self else { ticket.finish(.cancelled); return }
+                    self.finishJob(ticket, gen: gen, data: gifData, ext: "gif")
                 }
             }
         }
@@ -495,17 +534,21 @@ public final class ClipboardWatcher {
         task.resume()
     }
 
-    private func downloadAndAddImage(_ remoteURL: URL) {
+    private func downloadAndAddImage(_ remoteURL: URL, ticket: WorkTicket) {
         let gen = generation
         let task = downloadSession.dataTask(with: remoteURL) { [weak self] data, response, error in
-            guard let data = data, error == nil, !data.isEmpty, data.count <= 60 * 1024 * 1024 else { return }
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) { return }
+            guard let data = data, error == nil, !data.isEmpty, data.count <= 60 * 1024 * 1024 else {
+                ticket.finish(.failed); return
+            }
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                ticket.finish(.failed); return
+            }
             // FIX: sniff the real format. The URL extension is often missing/wrong on CDNs, and an
             // HTML error page used to be saved as "image.jpg" and added to the deck.
-            guard let ext = ClipboardWatcher.imageExtension(for: data) else { return }
+            guard let ext = ClipboardWatcher.imageExtension(for: data) else { ticket.finish(.failed); return }
             DispatchQueue.main.async {
-                guard let self = self, self.isCurrent(gen) else { return }
-                self.addCaptured(data, ext: ext)
+                guard let self = self else { ticket.finish(.cancelled); return }
+                self.finishJob(ticket, gen: gen, data: data, ext: ext)
             }
         }
         track(task)
@@ -517,4 +560,34 @@ public final class ClipboardWatcher {
               let uti = CGImageSourceGetType(source) else { return nil }
         return UTType(uti as String)?.preferredFilenameExtension
     }
+}
+
+/// One piece of background work (a video turning into a GIF, a Pinterest pin downloading). Ends exactly once; if every
+/// closure holding it is dropped without ending it, it ends as `.failed`, so Que's working dot can never get stuck.
+public final class WorkTicket {
+    public enum Outcome { case added, failed, cancelled }
+
+    /// Set once a Pinterest pin turns out to be a video (picks the failure message).
+    public var isVideo: Bool
+    private var ended = false
+    private let lock = NSLock()
+    private let onEnd: (Outcome, Bool) -> Void
+
+    public init(isVideo: Bool, onEnd: @escaping (Outcome, Bool) -> Void) {
+        self.isVideo = isVideo
+        self.onEnd = onEnd
+    }
+
+    /// Safe from any thread; `onEnd` always runs on the main queue.
+    public func finish(_ outcome: Outcome) {
+        lock.lock()
+        let first = !ended
+        ended = true
+        lock.unlock()
+        guard first else { return }
+        let onEnd = self.onEnd, isVideo = self.isVideo
+        if Thread.isMainThread { onEnd(outcome, isVideo) } else { DispatchQueue.main.async { onEnd(outcome, isVideo) } }
+    }
+
+    deinit { finish(.failed) }
 }

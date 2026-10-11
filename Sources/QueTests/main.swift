@@ -273,7 +273,7 @@ func testPillNoticeWording() {
     assert(PillNotice.boardAdded(added: 45, requested: 48, name: "Refs").tone == .warning)
     assert(PillNotice.boardAdded(added: 3, requested: 3, name: "Refs").duration == 2, "Plain confirmation is brief")
     let prep = PillNotice.boardPreparing(name: "Refs")
-    assert(prep.duration == nil && prep.message.hasPrefix("Adding from"), "⌘-click turns the offer into progress that stays until done")
+    assert(prep.duration == nil && prep.message.hasSuffix("is joining Que"), "⌘-click turns the offer into progress that stays until done")
     assert(PillNotice.boardOnPrivateProfile().message == "This board is on a private profile")
     let again = PillNotice.boardAlreadyAdded(name: "Refs", choose: {})
     assert(again.message == "“Refs” is already in Que" && again.alternateAction != nil && again.primaryAction == nil,
@@ -486,6 +486,36 @@ func testWelcomeOnFreshInstalls() {
     print("✅ testWelcomeOnFreshInstalls passed!")
 }
 
+/// Video → GIF / pin jobs: the ticket ends exactly once, a dropped one counts as failed, and Que stays on screen
+/// (as just the dot when empty) while working.
+func testWorkingIndicator() {
+    print("Running testWorkingIndicator...")
+    var outcomes: [WorkTicket.Outcome] = []
+    let a = WorkTicket(isVideo: true) { outcome, _ in outcomes.append(outcome) }
+    a.finish(.added); a.finish(.failed)
+    assert(outcomes == [.added], "A job ends once")
+    var dropped: WorkTicket? = WorkTicket(isVideo: false) { outcome, isVideo in
+        outcomes.append(outcome); assert(!isVideo)
+    }
+    _ = dropped; dropped = nil
+    RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    assert(outcomes == [.added, .failed], "A job dropped without ending counts as failed (no stuck dot)")
+
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let panel = CursorHUDPanel(queueManager: queueManager)
+    panel.isWorking = true
+    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    assert(panel.isVisible, "Working on an empty Que: still on screen")
+    assert(abs(panel.frame.width - 28) <= 1, "...as just the 28pt dot, got \(panel.frame.size)")
+    assert((panel.contentView as! DeckHUDView).isWorking, "Dot is in its working state")
+    panel.isWorking = false
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    assert(!panel.isVisible, "Done and still empty (e.g. cancelled): hidden again")
+    assert(PillNotice.makingGIF().message == "Making a GIF" && PillNotice.makingGIF().detail == "Saving it a spot in Que.", "Wording")
+    print("✅ testWorkingIndicator passed!")
+}
+
 func testPinterestLiveBoard() {
     print("Running testPinterestLiveBoard...")
     let sem = DispatchSemaphore(value: 0)
@@ -570,5 +600,6 @@ testLegacyAppRename()
 testLoginItemMigration()
 testUpdateDotAssets()
 testWelcomeOnFreshInstalls()
+testWorkingIndicator()
 testPinterestLiveBoard()
 print("All verification tests passed successfully! 🚀\n")

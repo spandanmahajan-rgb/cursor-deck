@@ -39,7 +39,7 @@ Designers, researchers, and creators gathering visual references suffer from con
 | :--- | :--- | :--- |
 | **Collect Images** | `⌘C` or Right-Click Copy | Automatically intercepts copied images from web browsers, Finder, and desktop apps. |
 | **Screenshots** | `⌘⇧3` / `⌘⇧4` / `⌘⇧5` | Directly ingests newly taken desktop screenshots into Que without desktop clutter. Que hides itself while the screenshot overlay is open (⌘⇧4 / ⌘⇧5), but stays visible in screen shares. |
-| **Pinterest to GIF** | Copy Pin URL (`⌘C`) | Detects Pinterest video pin URLs, extracts the MP4/HLS stream, clips up to 4s, converts to high-framerate looping GIF, and queues it. |
+| **Pinterest to GIF** | Copy Pin URL (`⌘C`) | Detects Pinterest video pin URLs, extracts the MP4/HLS stream, clips up to 4s, converts to high-framerate looping GIF, and queues it. While a video or pin is on its way, Que says so ("Making a GIF / Saving it a spot in Que.") and its dot turns grey and hops until it lands; failures are announced. |
 | **Pinterest Boards** | Copy a board link | Que offers the board ("48 pins in “Board”"). `⌘ + Click` adds its pins to Que (skipping any already there); `⌥ + Click` opens a picker to choose pins. Public boards only; up to 100 at a time, "Load More Pins" for the rest. |
 | **Que Messages** | Automatic | Status and errors appear inside Que itself, which grows from its left edge to fit the text (e.g. "Pinterest request limit reached"). |
 | **Drop on Slides** | `⌘ + Drag` → Release `⌘` | Hold `⌘` to snap Que to the mouse, drag over Google Slides/Keynote/Figma, release `⌘` when the green `+` drop badge appears, and drop. |
@@ -208,7 +208,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.3.0**
+* **Current Released Version**: **v2.4.0**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 

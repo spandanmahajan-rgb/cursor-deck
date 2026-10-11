@@ -216,16 +216,56 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         }
     }
 
-    private var idleDotColor: NSColor { isPaused ? .systemOrange : Self.emerald }
+    private var idleDotColor: NSColor {
+        if isWorking { return Self.workingGrey }
+        return isPaused ? .systemOrange : Self.emerald
+    }
+
+    private static let workingGrey = NSColor(white: 0.78, alpha: 1)
+
+    /// Something is on its way into Que (a GIF being made, a pin downloading): grey dot, gently bouncing.
+    /// With Reduce Motion it pulses in place instead. A notice still colours the dot while it shows.
+    public var isWorking = false {
+        didSet {
+            guard isWorking != oldValue, let dot = dotView.layer else { return }
+            if activeNotice == nil {
+                let fade = CABasicAnimation(keyPath: "backgroundColor")
+                fade.duration = 0.2
+                dot.add(fade, forKey: "workFade")
+                dot.backgroundColor = idleDotColor.cgColor
+            }
+            if isWorking {
+                let motion: CAKeyframeAnimation
+                if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                    motion = CAKeyframeAnimation(keyPath: "opacity")
+                    motion.values = [1.0, 0.35, 1.0]
+                    motion.duration = 1.2
+                } else {
+                    motion = CAKeyframeAnimation(keyPath: "transform.translation.y")
+                    motion.values = [0, 2.5, 0]          // a small hop (layer y points up in this view)
+                    motion.keyTimes = [0, 0.4, 1]
+                    motion.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeIn)]
+                    motion.duration = 0.55
+                }
+                motion.repeatCount = .infinity
+                dot.add(motion, forKey: "working")
+            } else {
+                dot.removeAnimation(forKey: "working")
+            }
+            setAccessibilityValue(countDescription)
+        }
+    }
 
     private var countDescription: String {
         let count = queueManager?.count ?? 0
         let items = count == 1 ? "1 item" : "\(count) items"
+        if isWorking { return "Adding to Que, \(items)" }
         return isPaused ? "Paused, \(items)" : items
     }
 
     public func updateCount(_ count: Int, animateGlow: Bool = false) {
         countLabel.stringValue = "\(count)"
+        countLabel.isHidden = count == 0   // an empty Que that's working shows just the dot
         setAccessibilityValue(countDescription)
         needsDisplay = true
 

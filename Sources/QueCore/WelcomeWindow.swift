@@ -194,7 +194,7 @@ struct WelcomeView: View {
     }
 
     private static let steps: [Step] = [
-        Step(title: "Copy what catches your eye", body: "Images you copy hop into Que, the little badge that follows your pointer."),
+        Step(title: "Copy what catches your eye", body: "Every image you copy joins Que, the little badge that follows your pointer."),
         Step(title: "Hold ⌘ to call Que over", body: "It scoots right under your pointer, ready to go."),
         Step(title: "Drag, then let go", body: "Drop Que on a slide or canvas and everything lands at once."),
         Step(title: "⌥-click for a closer look", body: "See what's lined up, pick a few, or clear some out."),
