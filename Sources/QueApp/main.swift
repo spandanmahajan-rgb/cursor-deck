@@ -18,8 +18,9 @@ LaunchAtLoginManager.shared.migrateLegacyAgent()
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
-// Decide before anything below writes settings: brand-new users get the one-time welcome window.
-let isNewUser = WelcomeWindowController.isNewUser()
+// A copy installed by hand (from Que.dmg; new or returning user) gets the welcome + tour. In-app updates and normal
+// launches don't.
+let showWelcome = WelcomeWindowController.shouldShowWelcome(copyID: WelcomeWindowController.currentCopyID())
 
 // Turn Launch at Login on by default, but only the first time the app runs from /Applications.
 // (It used to re-enable on EVERY launch, so switching it off never stuck past a restart or update.)
@@ -54,7 +55,7 @@ screenshotWatcher.start()
 hudPanel.startTracking()
 
 // `open -a Que --args --show-welcome` shows it again (for checking the design; not needed by users).
-if isNewUser || CommandLine.arguments.contains("--show-welcome") {
+if showWelcome || CommandLine.arguments.contains("--show-welcome") {
     WelcomeWindowController.shared.onOpenQue = { menuBarManager.openControlCenter() }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { WelcomeWindowController.shared.show() }
 }

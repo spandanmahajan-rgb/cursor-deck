@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.2.0"
+    public static let currentVersion = "2.2.1"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
@@ -340,6 +340,8 @@ public final class UpdateManager {
         let fm = FileManager.default
         let destinationPath = Bundle.main.bundlePath.hasPrefix("/Applications") ? Bundle.main.bundlePath : "/Applications/Que.app"
         let currentPID = ProcessInfo.processInfo.processIdentifier
+        // The new copy's first launch is an update, not an install: no welcome tour (see WelcomeWindowController).
+        UserDefaults.standard.set(true, forKey: WelcomeWindowController.updateInProgressKey)
 
         if !fm.isWritableFile(atPath: destinationPath) {
             // Root-owned bundle (e.g. installed by the old .pkg): needs an admin password once.

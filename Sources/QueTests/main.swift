@@ -465,23 +465,25 @@ func testUpdateDotAssets() {
     print("✅ testUpdateDotAssets passed!")
 }
 
-/// The welcome window is for brand-new users only, and only once.
-func testWelcomeOnlyForNewUsers() {
-    print("Running testWelcomeOnlyForNewUsers...")
+/// The welcome shows for any copy installed by hand (new or returning users), not after updates or on relaunch.
+func testWelcomeOnFreshInstalls() {
+    print("Running testWelcomeOnFreshInstalls...")
     let suite = "com.que.tests.welcome.\(UUID().uuidString)"
-    let fresh = UserDefaults(suiteName: suite)!
-    defer { fresh.removePersistentDomain(forName: suite) }
-    assert(WelcomeWindowController.isNewUser(defaults: fresh), "Nothing saved yet: new user")
-    fresh.set(true, forKey: "Que_welcomeShown")
-    assert(!WelcomeWindowController.isNewUser(defaults: fresh), "Shown once: never again")
+    let d = UserDefaults(suiteName: suite)!
+    defer { d.removePersistentDomain(forName: suite) }
+    d.set(1_700_000_000.0, forKey: "CursorDeck_lastBackgroundCheck")   // a returning CursorDeck user
 
-    let suite2 = "com.que.tests.welcome.\(UUID().uuidString)"
-    let existing = UserDefaults(suiteName: suite2)!
-    defer { existing.removePersistentDomain(forName: suite2) }
-    existing.set(1_700_000_000.0, forKey: "CursorDeck_lastBackgroundCheck")
-    assert(!WelcomeWindowController.isNewUser(defaults: existing), "Existing CursorDeck/Que user: no welcome")
-    assert(existing.bool(forKey: "Que_welcomeShown"), "...and marked so it never appears after an update")
-    print("✅ testWelcomeOnlyForNewUsers passed!")
+    assert(WelcomeWindowController.shouldShowWelcome(copyID: "100", defaults: d), "Installed from the DMG: welcome")
+    assert(!WelcomeWindowController.shouldShowWelcome(copyID: "100", defaults: d), "Same copy opened again: no welcome")
+    d.set(true, forKey: WelcomeWindowController.updateInProgressKey)
+    assert(!WelcomeWindowController.shouldShowWelcome(copyID: "200", defaults: d), "New copy from an in-app update: no welcome")
+    assert(d.object(forKey: WelcomeWindowController.updateInProgressKey) == nil, "Update note cleared")
+    assert(WelcomeWindowController.shouldShowWelcome(copyID: "300", defaults: d), "Deleted and reinstalled: welcome again")
+    d.set(true, forKey: WelcomeWindowController.updateInProgressKey)   // an update that failed (old copy reopened)
+    assert(!WelcomeWindowController.shouldShowWelcome(copyID: "300", defaults: d), "Failed update: no welcome")
+    assert(WelcomeWindowController.shouldShowWelcome(copyID: "400", defaults: d), "...and the note doesn't linger")
+    assert(!WelcomeWindowController.shouldShowWelcome(copyID: nil, defaults: d), "Development builds: never")
+    print("✅ testWelcomeOnFreshInstalls passed!")
 }
 
 func testPinterestLiveBoard() {
@@ -567,6 +569,6 @@ testRemoveSeveralItems()
 testLegacyAppRename()
 testLoginItemMigration()
 testUpdateDotAssets()
-testWelcomeOnlyForNewUsers()
+testWelcomeOnFreshInstalls()
 testPinterestLiveBoard()
 print("All verification tests passed successfully! 🚀\n")

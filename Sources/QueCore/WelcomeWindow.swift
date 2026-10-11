@@ -5,14 +5,15 @@
 import AppKit
 import SwiftUI
 
-/// The one-time welcome shown on a brand-new user's first launch ("Welcome to Que, you Quetie!").
-/// Existing users (anyone who ran CursorDeck/Que before) never see it.
+/// The welcome + tour, shown whenever someone installs a fresh copy of Que by hand (from Que.dmg): brand-new users,
+/// and returning users who deleted the app and reinstalled it. Not shown after an in-app update, or on normal launches.
 public final class WelcomeWindowController: NSObject, NSWindowDelegate {
     public static let shared = WelcomeWindowController()
 
-    static let shownKey = "Que_welcomeShown"
-    /// Keys only a previous run would have written: their presence means this isn't a new user.
-    static let priorUseKeys = ["CursorDeck_launchAtLoginDefaultApplied", "CursorDeck_lastBackgroundCheck"]
+    /// The copy of the app that ran last (its bundle folder's file number: every installed copy gets a new one).
+    static let lastCopyKey = "Que_lastLaunchedCopy"
+    /// Written by Que's updater just before it swaps in a new version, so that launch doesn't count as an install.
+    public static let updateInProgressKey = "Que_updateInProgress"
 
     /// Window content width in points; the height follows the content.
     static let width: CGFloat = 380
@@ -23,17 +24,25 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
     /// Opens the menu bar panel (set by the app): the tour's last button sends the user there to explore.
     public var onOpenQue: (() -> Void)?
 
-    /// Call once at launch, BEFORE anything writes the prior-use keys. Returns whether this is a new user, and marks the
-    /// welcome as handled for everyone else so it never appears after an update.
-    public static func isNewUser(defaults: UserDefaults = .standard) -> Bool {
-        if defaults.bool(forKey: shownKey) { return false }
-        let usedBefore = priorUseKeys.contains { defaults.object(forKey: $0) != nil }
-        if usedBefore { defaults.set(true, forKey: shownKey) }
-        return !usedBefore
+    /// Identifies this installed copy of the app, or nil when not running from an .app bundle (development builds).
+    public static func currentCopyID(bundlePath: String = Bundle.main.bundlePath) -> String? {
+        guard bundlePath.hasSuffix(".app"),
+              let number = (try? FileManager.default.attributesOfItem(atPath: bundlePath))?[.systemFileNumber] as? NSNumber
+        else { return nil }
+        return number.stringValue
+    }
+
+    /// Call once at launch. True when this copy was just installed by hand (new or returning user); false for normal
+    /// launches and for the first launch after an in-app update. Records the copy and clears the update note.
+    public static func shouldShowWelcome(copyID: String?, defaults: UserDefaults = .standard) -> Bool {
+        let wasUpdate = defaults.object(forKey: updateInProgressKey) != nil
+        defaults.removeObject(forKey: updateInProgressKey)
+        guard let copyID = copyID, copyID != defaults.string(forKey: lastCopyKey) else { return false }
+        defaults.set(copyID, forKey: lastCopyKey)
+        return !wasUpdate
     }
 
     public func show() {
-        UserDefaults.standard.set(true, forKey: Self.shownKey)
         if let window = window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -64,7 +73,17 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.contentView = hosting
         window.delegate = self
-        window.center()
+        // On the screen the pointer is on (where the user is looking), a little above centre. `center()` picked
+        // the other display on a two-screen Mac, where the window ended up out of sight.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens.first
+        if let area = screen?.visibleFrame {
+            let size = window.frame.size
+            window.setFrameOrigin(NSPoint(x: (area.midX - size.width / 2).rounded(),
+                                          y: (area.minY + (area.height - size.height) * 0.6).rounded()))
+        } else {
+            window.center()
+        }
         self.window = window
 
         NSApp.activate(ignoringOtherApps: true)

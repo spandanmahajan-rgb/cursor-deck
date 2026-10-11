@@ -47,7 +47,7 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Shake to Clear** | Rapid cursor wiggle | Vigorously shaking the mouse back and forth clears Que with a dissolve animation. |
 | **Control Center Popover** | Click Menu Bar Icon | Arrowless floating 256×350 pt glass panel with toggles (Smart Filter, Screenshots, Shake Clear, Launch at Login), actions (Copy All, Grid, Clear), and "How to Use" guide. |
-| **Welcome Tour** | First launch (new users) | A welcome window ("Welcome to Que, you Quetie!") with a short page-by-page tour of the core moves, ending with "Open Que", which opens the menu bar panel. Shown once, never to existing users. |
+| **Welcome Tour** | After installing from Que.dmg | A welcome window ("Welcome to Que, you Quetie!") with a short page-by-page tour of the core moves, ending with "Open Que", which opens the menu bar panel. Shown whenever a fresh copy is installed by hand (new or returning users), never after an in-app update or on normal launches. Opens on the screen with the pointer. |
 | **In-App Auto Updater** | "Check for Updates..." | Background checks against GitHub Releases (at launch, then while running, at most once a day). A new version turns the small circle of the menu bar icon blue, and "Check for Updates…" becomes "Update to Que x…" in the Control Center and right-click menu; nothing pops up on its own. Installs with a passwordless in-place app replacement. |
 
 ---
@@ -208,7 +208,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.2.0**
+* **Current Released Version**: **v2.2.1**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 
