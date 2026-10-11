@@ -2,37 +2,37 @@
 import PackageDescription
 
 let package = Package(
-    name: "CursorDeck",
+    name: "Que",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .library(
-            name: "CursorDeckCore",
-            targets: ["CursorDeckCore"]
+            name: "QueCore",
+            targets: ["QueCore"]
         ),
         .executable(
-            name: "CursorDeckApp",
-            targets: ["CursorDeckApp"]
+            name: "Que",
+            targets: ["QueApp"]
         ),
         .executable(
-            name: "cursor-deck-tests",
-            targets: ["CursorDeckTests"]
+            name: "que-tests",
+            targets: ["QueTests"]
         )
     ],
     dependencies: [],
     targets: [
         .target(
-            name: "CursorDeckCore",
+            name: "QueCore",
             dependencies: []
         ),
         .executableTarget(
-            name: "CursorDeckApp",
-            dependencies: ["CursorDeckCore"]
+            name: "QueApp",
+            dependencies: ["QueCore"]
         ),
         .executableTarget(
-            name: "CursorDeckTests",
-            dependencies: ["CursorDeckCore"]
+            name: "QueTests",
+            dependencies: ["QueCore"]
         )
     ]
 )

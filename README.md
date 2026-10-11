@@ -1,56 +1,47 @@
-# CursorDeck ⧉
+# Que
 
-**CursorDeck** is a lightweight native macOS companion that lets you accumulate copied image references at your cursor and drop them simultaneously anywhere—Google Slides, WhatsApp, Figma, Slack, Keynote, and local folders.
+**Copy it. Que it. Drop it.**
 
-Zero terminal needed. Zero accessibility or screen recording permissions. Always ready.
+Que (say "queue") is a small native Mac app for collecting images. Copy images from anywhere and they line up in Que, a little glass badge that follows your pointer. When you're ready, drag Que into Google Slides, Keynote, Figma, Slack or WhatsApp and every image lands at once.
 
-> 📖 **Developer & Architecture Reference**: For technical architecture, macOS system restrictions, breakthrough solutions, and the release pipeline, see [CURSOR_DECK_MASTER_DOC.md](CURSOR_DECK_MASTER_DOC.md).
+No setup and no permissions: Que never asks for Accessibility, Screen Recording or Input Monitoring access.
 
----
-
-## ✨ Features
-
-- **Cursor Accumulator Pill**: As you copy images across web pages, screenshots, or folders, an ultra-compact glowing pill badge (`● 3 ⧉`) tracks near your pointer.
-- **⌘ Fluid Magnet Snap**: Hold `CMD` (⌘) to snap the pill directly under your cursor pointer with a spring glide for instant click-and-drag.
-- **Universal Burst Drop**: Drag from the badge and release onto **Google Slides, WhatsApp chats, Figma, Slack, or Finder**—all images land simultaneously.
-- **Smart Filter (Zero Design Tool Clutter)**: Automatically detects and ignores internal shape/vector copies inside **Adobe Illustrator, Photoshop, Figma, and Sketch**.
-- **Auto-Run at Startup**: Runs quietly in the background upon login (0% Dock clutter, clean `⧉` menu bar extra).
-- **Featherlight Footprint**: Written in pure native Swift & AppKit. Uses ~15MB RAM and 0% CPU at rest.
+> Developer and architecture notes: [QUE_MASTER_DOC.md](QUE_MASTER_DOC.md)
 
 ---
 
-## 🚀 Installation
+## What Que does
 
-1. Download the latest **`CursorDeck-v<version>.dmg`** from the **[Releases page](https://github.com/spandanmahajan-rgb/cursor-deck/releases/latest)**.
-2. Double-click the DMG and drag **CursorDeck** into your **Applications** folder.
-3. Open **CursorDeck** from your Applications folder.
+- **Collects as you copy.** Copy an image in a browser, Finder or a design app and it joins Que. Screenshots go straight in too, without landing on your desktop.
+- **Pinterest boards and videos.** Copy a board link to add its pins, or a video link to get a looping GIF.
+- **One drag drops everything.** Hold ⌘, Que snaps under your pointer, drag it onto your slide or canvas.
+- **Copy for chat.** ⌘-click Que, then paste every image at once in WhatsApp, Slack or Telegram.
+- **Preview and pick.** ⌥-click Que to see what's in it, select images, drag some out or remove them.
+- **Stays out of your way.** Ignores shapes copied inside Illustrator, Photoshop and Figma, skips password-manager copies, and pauses with one switch.
+- **Light.** Pure Swift and AppKit, about 15 MB of memory and no CPU while idle.
 
-> **Note for first launch**: Because CursorDeck is independent and open-source, on first open macOS may show an unidentified developer prompt. Simply **Right-click CursorDeck in Applications → Open → Open**. You only need to do this once!
+## Install
+
+1. Download **`Que-v<version>.dmg`** from the **[latest release](https://github.com/spandanmahajan-rgb/que/releases/latest)**.
+2. Open it and drag **Que** into **Applications**.
+3. Open **Que**. Its icon appears in the menu bar.
+
+> **First launch:** Que isn't from the App Store, so macOS may say it's from an unidentified developer. Right-click Que in Applications, choose **Open**, then **Open** again. You only need to do this once.
+
+**Used CursorDeck?** Que is its new name. Updating from CursorDeck installs Que automatically, renames the app to Que and keeps your settings.
+
+## How to use
+
+1. **Copy images** (⌘C or right-click › Copy Image). Que appears next to your pointer with a count.
+2. **Hold ⌘.** Que snaps under your pointer.
+3. **Drag** onto Slides, Keynote, Figma, Slack, WhatsApp or Finder and let go. Everything drops at once.
+
+Click the menu bar icon for the switches, Copy All, Grid and Clear, and the full **How to Use** guide. Right-click it for a quick menu.
 
 ---
 
-## 🕹 How to Use
+## License
 
-1. **Copy Images**: Press `Cmd + C` on any image on Google, Pinterest, Twitter, screenshots, or Finder. The compact emerald badge (`● 1 ⧉`) appears beside your cursor.
-2. **Hold ⌘ (Command)**: The badge magnetically glides to your cursor pointer.
-3. **Drag & Drop**: Click and drag from the badge into your destination (Google Slides, WhatsApp, Figma, Slack, or Finder) and release. All references are dropped at once!
-
----
-
-## 🛠 Menu Bar Controls (`⧉`)
-
-Click the `⧉` icon in your macOS menu bar to:
-- **Copy Batch to Clipboard**: Export the full accumulated batch to clipboard.
-- **Clear Deck**: Reset the queue anytime (`Cmd + K`).
-- **⏸ Pause Tracking / ▶ Resume Tracking**: Temporarily mute clipboard monitoring (`P`).
-- **Smart Filter**: Toggle automatic exclusion of design software.
-- **Launch at Startup**: Toggle auto-start on macOS login.
-
----
-
-## 📄 License
 Copyright © 2026 Spandan Mahajan. Licensed under the **[PolyForm Noncommercial License 1.0.0](LICENSE)**.
 
-You're welcome to read, learn from and use CursorDeck for personal and other noncommercial purposes. **Commercial use, including selling it or shipping it inside a paid product, is not permitted** without written permission. For commercial licensing, contact me via GitHub.
-
-Created with ❤️ for Mac creators and power users.
+You're welcome to read, learn from and use Que for personal and other noncommercial purposes. **Commercial use, including selling it or shipping it inside a paid product, is not permitted** without written permission. For commercial licensing, contact me via GitHub.
