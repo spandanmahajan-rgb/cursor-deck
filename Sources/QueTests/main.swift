@@ -455,6 +455,16 @@ func testLoginItemMigration() {
     print("✅ testLoginItemMigration passed!")
 }
 
+/// Update dot: the dot-less menu bar mark loads at 1x and 2x, and the dot sits inside the 16pt mark.
+func testUpdateDotAssets() {
+    print("Running testUpdateDotAssets...")
+    let image = QueLogoAsset.menuBarImageWithoutDot
+    assert(image.isTemplate && image.representations.map { $0.pixelsWide }.sorted() == [16, 32], "Dot-less mark has 1x and 2x")
+    let dot = QueLogoAsset.updateDotRect
+    assert(dot.minX >= 0 && dot.maxX <= 16 && dot.minY >= 0 && dot.maxY <= 16.01, "Dot sits inside the 16pt mark")
+    print("✅ testUpdateDotAssets passed!")
+}
+
 func testPinterestLiveBoard() {
     print("Running testPinterestLiveBoard...")
     let sem = DispatchSemaphore(value: 0)
@@ -537,5 +547,6 @@ testBackgroundImport()
 testRemoveSeveralItems()
 testLegacyAppRename()
 testLoginItemMigration()
+testUpdateDotAssets()
 testPinterestLiveBoard()
 print("All verification tests passed successfully! 🚀\n")

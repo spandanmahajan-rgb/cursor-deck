@@ -38,6 +38,8 @@ public final class DeckControlCenterState: ObservableObject {
     @Published public var isShakeClearEnabled: Bool = true
     @Published public var isLaunchAtLoginEnabled: Bool = false
     @Published public var isCopiedFeedback: Bool = false
+    /// A newer version waiting to be installed (blue dot), or nil.
+    @Published public var availableUpdate: String? = nil
 
     private weak var queueManager: DeckQueueManager?
     private weak var clipboardWatcher: ClipboardWatcher?
@@ -74,6 +76,7 @@ public final class DeckControlCenterState: ObservableObject {
         self.isScreenshotWatcherEnabled = screenshotWatcher?.isEnabled ?? true
         self.isShakeClearEnabled = hudPanel?.shakeDetector.isEnabled ?? true
         self.isLaunchAtLoginEnabled = LaunchAtLoginManager.shared.isEnabled
+        self.availableUpdate = UpdateManager.shared.availableVersion
     }
 
     public func toggleTracking() {
@@ -510,11 +513,24 @@ public struct DeckControlCenterView: View {
                     onDismiss?()
                     state.checkForUpdates()
                 }) {
-                    Text("Check for Updates…")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
+                    if let version = state.availableUpdate {
+                        // Same blue dot as the menu bar icon; the update window opens from here.
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 6, height: 6)
+                            Text("Update to Que \(version)…")
+                                .font(.callout)
+                                .foregroundColor(.primary)
+                        }
+                    } else {
+                        Text("Check for Updates…")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(state.availableUpdate.map { "Update to Que \($0)" } ?? "Check for Updates")
 
                 Spacer()
 

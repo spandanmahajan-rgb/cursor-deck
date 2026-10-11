@@ -50,10 +50,9 @@ clipboardWatcher.start()
 screenshotWatcher.start()
 hudPanel.startTracking()
 
-// Quiet background update check 4 seconds after launch
-DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-    UpdateManager.shared.checkForUpdates(userInitiated: false)
-}
+// Quiet background update checks (4 s after launch, then while running). A newer version turns the small circle of the
+// menu bar icon blue; the update window only opens from "Check for Updates…" / "Update to Que x…".
+UpdateManager.shared.startBackgroundChecks()
 
 // Keep app event loop running
 app.run()

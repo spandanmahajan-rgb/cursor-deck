@@ -9,13 +9,50 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.0.0"
+    public static let currentVersion = "2.1.0"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
     private let latestReleaseURL = URL(string: "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest")!
 
     private var isChecking = false
+    private var periodicTimer: Timer?
+
+    /// Posted on the main queue whenever `availableVersion` changes (menu bar dot, Control Center, quick menu).
+    public static let availabilityDidChange = Notification.Name("QueUpdateAvailabilityDidChange")
+    private static let availableVersionKey = "Que_availableUpdateVersion"
+
+    /// A newer version found by any check, remembered across launches (a background check runs at most once a day),
+    /// or nil when Que is up to date. Shown as a blue dot in the menu bar icon; nothing pops up on its own.
+    public private(set) var availableVersion: String? = {
+        guard let stored = UserDefaults.standard.string(forKey: availableVersionKey),
+              UpdateManager.compare(stored, currentVersion) > 0 else { return nil }
+        return stored
+    }()
+
+    private func setAvailableVersion(_ version: String?) {
+        guard version != availableVersion else { return }
+        availableVersion = version
+        if let version = version {
+            UserDefaults.standard.set(version, forKey: Self.availableVersionKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.availableVersionKey)
+        }
+        NotificationCenter.default.post(name: Self.availabilityDidChange, object: self)
+    }
+
+    /// Checks shortly after launch, then keeps checking while Que runs (people rarely quit a menu bar app).
+    /// Each background check is still throttled to once every 24 hours.
+    public func startBackgroundChecks() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.checkForUpdates(userInitiated: false)
+        }
+        periodicTimer?.invalidate()
+        periodicTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            self?.checkForUpdates(userInitiated: false)
+        }
+        periodicTimer?.tolerance = 600
+    }
 
     private init() {}
 
@@ -75,8 +112,10 @@ public final class UpdateManager {
         let cleanRemoteVersion = tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
         let cleanCurrentVersion = UpdateManager.currentVersion.trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
 
-        let isNewer = compareVersions(cleanRemoteVersion, cleanCurrentVersion) > 0
+        let isNewer = Self.compare(cleanRemoteVersion, cleanCurrentVersion) > 0
         if isNewer || userInitiated { log("check: latest on GitHub is \(cleanRemoteVersion), newer: \(isNewer)") }
+
+        setAvailableVersion(isNewer ? cleanRemoteVersion : nil)
 
         if !isNewer {
             if userInitiated {
@@ -89,13 +128,8 @@ public final class UpdateManager {
             return
         }
 
-        // If background check, check if user previously clicked "Later" for this specific version
-        if !userInitiated {
-            if let snoozed = UserDefaults.standard.string(forKey: "CursorDeck_snoozedVersion"),
-               snoozed == cleanRemoteVersion {
-                return
-            }
-        }
+        // Background checks only light the blue dot; the window opens when the user chooses Check for Updates.
+        guard userInitiated else { return }
 
         // Newer version found!
         let body = (json["body"] as? String) ?? "A new version of Que is available."
@@ -162,16 +196,13 @@ public final class UpdateManager {
         let response = present(alert)
         log("prompt for \(remoteVersion): \(response == .alertFirstButtonReturn ? "Update Now" : "Later")")
         if response == .alertFirstButtonReturn {
-            UserDefaults.standard.removeObject(forKey: "CursorDeck_snoozedVersion")
             if let downloadURL = downloadURL {
                 performDownloadAndInstall(from: downloadURL, isZip: isZip, remoteVersion: remoteVersion)
             } else {
                 NSWorkspace.shared.open(fallbackWebURL)
             }
-        } else {
-            // User clicked "Later": snooze this version for background checks
-            UserDefaults.standard.set(remoteVersion, forKey: "CursorDeck_snoozedVersion")
         }
+        // "Later": nothing else happens; the blue dot stays until the update is installed.
     }
 
     /// AUDIT: release assets must be served over HTTPS from github.com's release-download path.
@@ -261,8 +292,8 @@ public final class UpdateManager {
                 problem = "Failed to extract update: \(error.localizedDescription)"
             }
 
-            // Que.zip carries the app twice: Que.app (used here) and CursorDeck.app, the name updaters in
-            // CursorDeck 1.x look for. Accept either, so a zip with only one of them still works.
+            // Que.zip holds Que.app. (2.0.0's zip also carried a CursorDeck.app copy for CursorDeck 1.x updaters;
+            // accepting either name keeps any zip working.)
             let queURL = tempExtractDir.appendingPathComponent("Que.app")
             let appURL = fm.fileExists(atPath: queURL.path) ? queURL : tempExtractDir.appendingPathComponent("CursorDeck.app")
             if problem == nil {
@@ -488,7 +519,7 @@ public final class UpdateManager {
     }
 
     /// Compares two semver strings (e.g., "1.1.0" vs "1.0.0"). Returns >0 if v1 > v2, <0 if v1 < v2, 0 if equal.
-    private func compareVersions(_ v1: String, _ v2: String) -> Int {
+    static func compare(_ v1: String, _ v2: String) -> Int {
         // AUDIT: "1.2.0-beta" used to lose its last segment (compactMap dropped "0-beta"), comparing as 1.2.
         func parts(_ v: String) -> [Int] {
             let core = v.split(whereSeparator: { $0 == "-" || $0 == "+" }).first.map(String.init) ?? v

@@ -37,6 +37,36 @@ public final class MenuBarManager: NSObject {
         removeClickOutsideMonitors()
     }
 
+    // MARK: - Update dot
+
+    /// Blue dot drawn over the small circle of the menu bar mark while an update is waiting. The mark itself stays a
+    /// template image (so macOS keeps tinting it for light/dark menu bars); only this dot is coloured.
+    private let updateDot: NSView = {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        view.isHidden = true
+        view.setAccessibilityElement(false)
+        return view
+    }()
+
+    private var hasUpdate: Bool { UpdateManager.shared.availableVersion != nil }
+
+    /// Puts the dot exactly where the mark's small circle is, wherever the image sits in the button (alone, or left of
+    /// the count / ⏸). Re-run whenever the image, title or button size changes.
+    private func positionUpdateDot() {
+        guard let button = statusItem?.button, let cell = button.cell else { return }
+        updateDot.isHidden = !hasUpdate
+        guard hasUpdate else { return }
+        let imageRect = cell.imageRect(forBounds: button.bounds)
+        let scale = imageRect.width / QueLogoAsset.menuBarImage.size.width
+        let dot = QueLogoAsset.updateDotRect
+        let x = imageRect.minX + dot.minX * scale
+        let y = button.isFlipped ? imageRect.minY + dot.minY * scale : imageRect.maxY - dot.maxY * scale
+        updateDot.frame = NSRect(x: x, y: y, width: dot.width * scale, height: dot.height * scale)
+        updateDot.layer?.cornerRadius = updateDot.frame.width / 2
+    }
+
     private func setupStatusBar() {
         // Create status bar item in macOS menu bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -48,6 +78,15 @@ public final class MenuBarManager: NSObject {
             button.target = self
             button.action = #selector(statusBarButtonClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.addSubview(updateDot)
+            button.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: button, queue: .main) { [weak self] _ in
+                self?.positionUpdateDot()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: UpdateManager.availabilityDidChange, object: nil, queue: .main) { [weak self] _ in
+            self?.updateStatusItemBadge()
+            self?.controlCenterState?.refresh()
         }
 
         let state = DeckControlCenterState(
@@ -230,7 +269,9 @@ public final class MenuBarManager: NSObject {
         pauseItem.target = self
         menu.addItem(pauseItem)
 
-        let updateItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        let updateTitle = UpdateManager.shared.availableVersion.map { "Update to Que \($0)…" } ?? "Check for Updates…"
+        let updateItem = NSMenuItem(title: updateTitle, action: #selector(checkForUpdates), keyEquivalent: "")
+        if hasUpdate { updateItem.image = Self.blueDotImage }
         updateItem.target = self
         menu.addItem(updateItem)
 
@@ -249,7 +290,18 @@ public final class MenuBarManager: NSObject {
         guard let button = statusItem?.button else { return }
         let count = queueManager.count
         let isPaused = clipboardWatcher?.isPaused ?? false
-        button.image = QueLogoAsset.menuBarImage
+        button.image = hasUpdate ? QueLogoAsset.menuBarImageWithoutDot : QueLogoAsset.menuBarImage
+        if let version = UpdateManager.shared.availableVersion {
+            button.toolTip = "Que: version \(version) is available"
+            button.setAccessibilityValue("Update available")
+        } else {
+            button.toolTip = "Que"
+            button.setAccessibilityValue(nil)
+        }
+        defer {
+            positionUpdateDot()
+            DispatchQueue.main.async { [weak self] in self?.positionUpdateDot() }   // after the status item resizes
+        }
         if isPaused {
             button.imagePosition = .imageLeft
             button.title = " ⏸"
@@ -261,6 +313,17 @@ public final class MenuBarManager: NSObject {
             button.title = ""
         }
     }
+
+    /// Small blue dot for the "Update to Que x…" menu item, matching the one in the menu bar icon.
+    private static let blueDotImage: NSImage = {
+        let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+            NSColor.systemBlue.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            return true
+        }
+        image.accessibilityDescription = "Update available"
+        return image
+    }()
 
     @objc public func copyBatch() {
         PasteboardWriter.shared.writeToPasteboard(items: queueManager.items)

@@ -37,16 +37,11 @@ lipo -create -output Que.app/Contents/MacOS/Que \
   .build/x86_64-apple-macosx/release/Que
 codesign --force --deep -s - Que.app
 
-# 4. Package zip for in-app auto-updater.
-# It holds the app twice: Que.app for Que's updater, and the same app as CursorDeck.app because updaters in
-# CursorDeck 1.x only look for that name (they then install it and Que renames itself to Que.app on launch).
-# Keep the CursorDeck.app copy until CursorDeck 1.x users have moved over (see CLAUDE.md).
+# 4. Package zip for in-app auto-updater (Que.app only; the CursorDeck.app copy for CursorDeck 1.x updaters was
+# dropped after 2.0.0 — those few users reinstall from the DMG).
 echo "Creating Que.zip..."
-rm -rf .zip_staging Que.zip && mkdir -p .zip_staging
-ditto Que.app .zip_staging/Que.app
-ditto Que.app .zip_staging/CursorDeck.app
-ditto -c -k --sequesterRsrc .zip_staging Que.zip
-rm -rf .zip_staging
+rm -f Que.zip
+ditto -c -k --sequesterRsrc --keepParent Que.app Que.zip
 
 # 5. Build DMG (Standard Drag-and-Drop Disk Image — No Admin Password Required)
 echo "Building DMG..."

@@ -14,6 +14,9 @@ public enum QueLogoAsset {
     private static let pill1x = "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAq0lEQVR42m3QQWoCQRAF0OeMKG6D55ABs/ECXkECkpVnyNojeIKAmxEkW917CvcGvMFIYDIZF6mGieTDp+j+v+p3F+R+8YwdPnFBiWloyWOBCu0Dq9BAgTqEGj/B7l2RY4MJvtFHL4zCNMATXDtT2n9Y45rFhIQ2aokV9pEygo8wfEU9+Yu39KEpmohusI2UMZbIul2vnYk3DLGO83vaY1rmDAcc411znPECd99qNLDFYIT3AAAAAElFTkSuQmCC"
     private static let pill2x = "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABnElEQVR42p3Uv2oVURAG8N/dbIxga2EjqEQQMYWxEG20ErW6sdBGxN7eZ/ANfAQlhYIgViKCaKkQEGvBwipEBb3Jza7NHJnsvbtqDhz2/Jn55pvZ78zI3rGA3VivYg0XcQoNPuEtnuLDHJ8ZMDiJx/iFtmf+xKOwzb4zYDewlRynEb2JuRtn5X4rfPaAlsU4Ge4MsJtnM85YIxzH98Si/cdZ2P8IjFFhuf4fzPqYrhewM9iOSO0+ZxPAKxVuYjEO9zsa1LhVh87k/AdGYVTsRx3fC/Al0R5KazpwVny/1vNE2ZPSQgj6YzA6jYPxp6sArOBVkkCfNFo8wYkUZBnP4q68qtfwYCClAva+RI9vWS/iZdh8wzU4G2DNgMbuBcCB9CJKqZZwpcP+D/WdnqKvRd3qv6ihqsLgPiaRStORCRxNRW9xCe+wgTthUxffQv12ksC0U8MNHArAI9jsZHK+r+PcDaZtahTbsb8eNldjPwkZtZFhYTnTE1fxovOTNnEsGB7G53Q3wUpSwNxGC5fxEM+jZpnBObyJUowz2G8zp9Xr0kW3/wAAAABJRU5ErkJggg=="
 
+    private static let menuBarNoDot1x = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABG0lEQVR42oXTvUpDQRAF4C9/naWiVtrYWIivIvgAgjZ2EbHQypTaWfgGvoGtPwg+SkSJIraa3MRmVpclNxlY7rLnnNkzM3v5j1Z8l3GCe7ziBXc4DgyaikjiA/QxqVl97Beav81FRhyhwjhWFWcJvyyT7AXwE+Q6B1VwJqEBixgEOEucJ6lCs9TCIXbCasv8aAR3Ae/wkNVZd+sIw4yT+vMIb3E4rhGPp5SQzgbtaTONmITdBp7iPWxiOxxBR4DTSqjwjd0i8XnGuYXTrM4EDON7k93UDjdwhCuswgo+izGmBN2YTCebQCO304wmnsU+JUixkTVN5rCdO0qzvy5KGOELa3U/UP4wEtjFR9HMrXkJFIR19PAcCWeKfwH124bF8iiq9wAAAABJRU5ErkJggg=="
+    private static let menuBarNoDot2x = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACcklEQVR42sWXsWsUURDGf/tuo1GJIKixsQlWEpAQQwqrCFEkFoqdIKKQKr1iJfg/XAoLmxSxCdoISRCEQERFCTaKGBvBQgtBMIW53K3NTBie7/be7t7GgeF2b3fn+97MvJl5CfnSANrmfhyYAiaAEeAU0AG+AJvAG+AF8D7HRpQk8iHAAWAWWAe2gayH/gHWgNvAoCGRFAHXl68CHz2AHdG2rL4j1/q/ffcDcCVgt6s4+U2BpjHUEpAsUtvyjd43xabF6LryQ8CKWW0R4BAR9cqK2A56QmOeAqvywXYFYF/V1qpg/JMTmnDNGsB9EvMe5u7FjIl3VpMqicsW2wH7gc8mo+sioDtnU7bobhhumqTLalbFuGUT8KUw2ysCHeCVemC0pqTrpS3gjAOmgYEy9bqCtGU7Tjtgkv8nk066GkWaRR9EsUYS4CdwROKSVHRrFmjneTa3UtMkyoJrUjVyiHV71kilKIzJ1nAlwLW5vAaWga9SZMakFR8NkFCsTwBLJYuQzgK/gRtdCJ4AFgMlXtv7U4B7JQloq71k4p16qrJkekFLiGfANYCzJeq/ruaRAOzLmSkdcBh47pF/YF/aKFiKlfA5AWhEbDmAC9IDRv1ncwVasbpvS2Ics4OSnPGPBBgCvkW2YyXwCzhWYAvbqcuFpqHrBaYhJXpaDLuqpVFJPI4koaG6a6boyrXZydT6NoKE1oDvwHDszB97JjgOvDMr7fTwwp0qXnCB8vgDOA88EaOJmWJCdf5kv1ulJTUnbrau1yOYemDGH7P71a+VyDBwXxqHH4aHvY5blCgQVlJZLcBBOZpflDx5BiwYG1kZAn8BbNbSkYp5h00AAAAASUVORK5CYII="
+
     /// Decoded once (these used to be rebuilt on every access).
     private static func makeImage(points: CGFloat, oneX: String, twoX: String) -> NSImage {
         let image = NSImage(size: NSSize(width: points, height: points))
@@ -28,6 +31,13 @@ public enum QueLogoAsset {
 
     /// Menu bar extra: 16pt (a circle reads smaller than a square, so this matches a 15pt square icon's weight).
     public static let menuBarImage: NSImage = makeImage(points: 16, oneX: menuBar1x, twoX: menuBar2x)
+
+    /// The menu bar mark without its small circle: shown while an update is waiting, with a blue dot drawn in the
+    /// circle's place (`updateDotRect`), so the dot can be coloured while the mark stays a template image.
+    public static let menuBarImageWithoutDot: NSImage = makeImage(points: 16, oneX: menuBarNoDot1x, twoX: menuBarNoDot2x)
+
+    /// Where the small circle sits in the 16pt menu bar mark (points, origin top-left).
+    public static let updateDotRect = CGRect(x: 10.1, y: 12.0, width: 3.9, height: 3.9)
 
     /// Inside the floating Que badge, next to the count.
     public static let pillImage: NSImage = makeImage(points: 10, oneX: pill1x, twoX: pill2x)
