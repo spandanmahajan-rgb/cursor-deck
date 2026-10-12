@@ -16,9 +16,6 @@ enum WordmarkPiece: CaseIterable {
     static let pivot = CGPoint(x: 28.955, y: 29.216)
     /// How far the q rolls (clockwise, degrees) from "notch facing up" to its real position.
     static let rollAngle: Double = 145.72
-    /// In the finished logo the dot sits this far (points) out from the bottom of the q's notch, measured towards the
-    /// circle's centre. Falling, the dot goes this much further so it really touches the letter before it rolls.
-    static let restGap: CGFloat = 13.3
 
     private var source: (base64: String, frame: CGRect) {
         switch self {
@@ -47,73 +44,91 @@ enum WordmarkPiece: CaseIterable {
     private static var cache: [WordmarkPiece: NSImage] = [:]
 }
 
-/// The wordmark that forms itself (see `WordmarkPiece`). About 1.4 s; plays once. With Reduce Motion (or `animate`
-/// false) it simply shows the finished logo. `onFormed` fires when the logo is complete (the text fades in then).
+/// The wordmark that forms itself, with the dot behaving like a small HEAVY ball on a hard surface (owner's storyboard):
+/// 1. "u u e": the q is turned so its notch faces up; the dot is above it.
+/// 2. The dot falls under gravity (fastest at impact, no easing) and hits the notch: 2-frame squash, and in that same
+///    frame the letter starts turning from the jolt.
+/// 3. The dot rolls straight to the notch's right edge (accelerating, ~70 ms).
+/// 4. Its weight tumbles the letter: the turn ACCELERATES the whole way (a body falling over), no ease-out.
+/// 5. As the notch's mouth comes round under it, the dot drops out to its place and rides the letter from there.
+/// 6. The letter hits its resting position hard, knocks back once or twice (rigid, small) and stops dead: the logo.
+/// The motion is simulated once (a small fixed-step physics table) and shown at 24 fps (stepped, like film), so hits
+/// read as instant. Reduce Motion (or `animate` false) shows the finished logo. `onFormed` fires when it's complete.
+/// (History: v1 eased + bounced, v2 eased roll on contact, v3 eased "physics" timeline — owner: too soft. This is v4.)
 struct AnimatedWordmark: View {
     let animate: Bool
     var onFormed: () -> Void = {}
+    /// For checking frames: render the pose at this time instead of animating.
+    var previewTime: Double? = nil
 
-    @State private var angle: Double
-    @State private var drop: CGFloat
-    @State private var dotLanded: Bool
-    /// How far the attached dot is pulled in towards the circle's centre: `restGap` at contact, 0 once it's the q.
-    @State private var inset: CGFloat
+    @State private var start: Date?
+    /// How far above its landing spot the dot starts: just above the window's top edge (measured), so it falls in from outside.
+    @State private var dropHeight: CGFloat?
+    @State private var finished = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(animate: Bool, onFormed: @escaping () -> Void = {}) {
+    /// Shown frame rate (stepped). nil = every display frame.
+    static let frameRate: Double? = 24
+
+    init(animate: Bool, previewTime: Double? = nil, onFormed: @escaping () -> Void = {}) {
         self.animate = animate
+        self.previewTime = previewTime
         self.onFormed = onFormed
-        _angle = State(initialValue: animate ? -WordmarkPiece.rollAngle : 0)
-        _drop = State(initialValue: animate ? -85 : 0)
-        _dotLanded = State(initialValue: !animate)
-        _inset = State(initialValue: animate ? WordmarkPiece.restGap : 0)
-    }
-
-    /// Unit vector (in the letter's own, unrotated frame) from the dot's resting spot towards the circle's centre.
-    private var inward: CGVector {
-        let d = WordmarkPiece.qDot.frame, p = WordmarkPiece.pivot
-        let v = CGVector(dx: p.x - d.midX, dy: p.y - d.midY)
-        let len = (v.dx * v.dx + v.dy * v.dy).squareRoot()
-        return CGVector(dx: v.dx / len, dy: v.dy / len)
-    }
-
-    /// Where the dot sits at the top of the notch before the roll (its final spot, rolled back by the roll angle).
-    private var landing: CGPoint {
-        let d = WordmarkPiece.qDot.frame, p = WordmarkPiece.pivot
-        let v = CGPoint(x: d.midX - p.x, y: d.midY - p.y)
-        let a = -WordmarkPiece.rollAngle * .pi / 180   // screen coords (y down): positive angles turn clockwise
-        return CGPoint(x: p.x + v.x * cos(a) - v.y * sin(a), y: p.y + v.x * sin(a) + v.y * cos(a))
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            // The q: body (and, once it has landed, the dot) roll together around the circle's centre.
-            ZStack(alignment: .topLeading) {
-                piece(.qBody)
-                if dotLanded {
-                    piece(.qDot).offset(x: inward.dx * inset, y: inward.dy * inset)
+        Group {
+            if let t = previewTime {
+                frame(Self.pose(at: t))
+            } else if !animate || reduceMotion || finished {
+                frame(Self.pose(at: .infinity))
+            } else {
+                TimelineView(.animation(minimumInterval: Self.frameRate.map { 1 / $0 })) { context in
+                    let t = start.map { context.date.timeIntervalSince($0) } ?? 0
+                    // Until the window position is measured, the dot waits far above (out of sight).
+                    frame(Self.pose(at: Self.frameRate.map { (t * $0).rounded(.down) / $0 } ?? t,
+                                    dropHeight: dropHeight ?? 10_000))
                 }
-            }
-            .frame(width: WordmarkPiece.size.width, height: WordmarkPiece.size.height, alignment: .topLeading)
-            .rotationEffect(.degrees(angle), anchor: UnitPoint(x: WordmarkPiece.pivot.x / WordmarkPiece.size.width,
-                                                              y: WordmarkPiece.pivot.y / WordmarkPiece.size.height))
-            piece(.u)
-            piece(.eBody)
-            piece(.eDot)
-            if !dotLanded {
-                let d = WordmarkPiece.qDot.frame
-                Image(nsImage: WordmarkPiece.qDot.image)
-                    .renderingMode(.template)
-                    .resizable()
-                    .frame(width: d.width, height: d.height)
-                    // Lands touching the bottom of the notch (straight below = towards the centre at this moment).
-                    .offset(x: landing.x - d.width / 2, y: landing.y - d.height / 2 + WordmarkPiece.restGap + drop)
             }
         }
         .frame(width: WordmarkPiece.size.width, height: WordmarkPiece.size.height, alignment: .topLeading)
+        .background(GeometryReader { proxy in
+            // The window's content runs under its transparent title bar, so .global y 0 = the window's top edge.
+            Color.clear.onAppear {
+                let dotRadius = WordmarkPiece.qDot.frame.height / 2
+                dropHeight = max(Self.minDropHeight, proxy.frame(in: .global).minY + Self.landing.y + dotRadius + 2)
+            }
+        })
         .accessibilityElement()
         .accessibilityLabel("Que")
         .onAppear(perform: run)
+    }
+
+    private func run() {
+        guard previewTime == nil else { return }
+        guard animate, !reduceMotion else { onFormed(); return }
+        start = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.endTime) { finished = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.endTime + 0.05) { onFormed() }
+    }
+
+    private func frame(_ pose: Pose) -> some View {
+        let d = WordmarkPiece.qDot.frame
+        return ZStack(alignment: .topLeading) {
+            piece(.qBody)
+                .frame(width: WordmarkPiece.size.width, height: WordmarkPiece.size.height, alignment: .topLeading)
+                .rotationEffect(.degrees(pose.angle), anchor: UnitPoint(x: WordmarkPiece.pivot.x / WordmarkPiece.size.width,
+                                                                        y: WordmarkPiece.pivot.y / WordmarkPiece.size.height))
+            piece(.u)
+            piece(.eBody)
+            piece(.eDot)
+            Image(nsImage: WordmarkPiece.qDot.image)
+                .renderingMode(.template)
+                .resizable()
+                .frame(width: d.width, height: d.height)
+                .scaleEffect(x: pose.squash.width, y: pose.squash.height, anchor: .bottom)
+                .offset(x: pose.dot.x - d.width / 2, y: pose.dot.y - d.height / 2)
+        }
     }
 
     private func piece(_ piece: WordmarkPiece) -> some View {
@@ -124,25 +139,111 @@ struct AnimatedWordmark: View {
             .offset(x: piece.frame.minX, y: piece.frame.minY)
     }
 
-    private func run() {
-        guard animate else { return }
-        if reduceMotion {
-            angle = 0; drop = 0; inset = 0; dotLanded = true
-            onFormed()
-            return
+    // MARK: - Physics
+
+    struct Pose {
+        var angle: Double                       // the q's rotation, degrees, clockwise (0 = the logo)
+        var dot: CGPoint                        // the dot's centre, wordmark points, screen orientation
+        var squash = CGSize(width: 1, height: 1)
+    }
+
+    // Geometry (points, letter frame), measured from the owner's artwork.
+    static let biteCentre = CGPoint(x: 39.622, y: 44.876)   // centre of the circle the notch is cut from
+    static let rollRadius: CGFloat = 12.479 - 7.288          // notch radius − dot radius: path of the dot's centre
+    static var dotHome: CGPoint { CGPoint(x: WordmarkPiece.qDot.frame.midX, y: WordmarkPiece.qDot.frame.midY) }
+    /// Direction (path angle, degrees, + = right of straight down, letter frame) of the notch's mouth: towards the dot's
+    /// home. At the start (letter at −145.72°) that points straight up.
+    static let mouthAngle = atan2(Double(43.726 - 39.622), Double(50.884 - 44.876)) * 180 / .pi
+
+    // Tuning.
+    static let contact = 0.48                        // impact time; the fall before it is pure gravity
+    static let impactSpeed = 2 * 86 / 0.26           // pt/s at the hit: same as the approved 86 pt / 0.26 s drop, so the
+                                                     // letter's reaction (jolt, tumble) matches the hit it gets
+    static let minDropHeight: CGFloat = 86           // used when the logo isn't in a window (previews)
+    static let landAngle = -18.0                     // where the dot hits, on the notch path (deg from straight down)
+    static let edgeAngle = 40.0, rollTime = 0.07     // it rolls straight to the right edge
+    static let jolt = 140.0                          // deg/s the letter gets in the frame of impact
+    static let tumble = 2600.0                       // deg/s² × sin(lean): gravity on the off-centre weight
+    static let restitution = 0.25, settleAccel = 3200.0   // rigid knock-back at the landing, then dead stop
+
+    /// Fixed-step simulation of the letter's turn after impact (progress in degrees, 0 → rollAngle, plus knock-backs).
+    private static let letterTable: [Double] = {
+        let dt = 1.0 / 960, target = WordmarkPiece.rollAngle
+        var p = 0.0, v = jolt, out: [Double] = [0], landed = false, bounces = 0
+        while out.count < 4000 {
+            if !landed {
+                // Tumbling: the lean grows as it turns (it starts ~20° off balance from the dot's weight).
+                v += tumble * sin((p + 20) * .pi / 180) * dt
+            } else {
+                v += settleAccel * dt               // after the first hit: pressed hard back onto its rest position
+            }
+            p += v * dt
+            if p >= target && v > 0 {               // hits its resting position: small rigid knock-back
+                p = target; landed = true; bounces += 1
+                v = -v * restitution
+                if abs(v) < 60 || bounces > 2 { out.append(target); break }
+            }
+            out.append(p)
         }
-        func after(_ t: Double, _ body: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + t, execute: body) }
-        // The dot falls, speeding up, and the instant it touches the bottom of the notch its weight tips the letter:
-        // the roll starts already moving (no pause, no bounce), slows, overshoots a touch and settles as the q,
-        // while the dot eases out of the notch to its place in the logo. (A first version bounced the dot before
-        // rolling; the owner wanted contact and roll to be one motion.)
-        let fall = 0.38
-        after(0.30) { withAnimation(.easeIn(duration: fall)) { drop = 0 } }
-        after(0.30 + fall) {
-            var still = Transaction(); still.disablesAnimations = true
-            withTransaction(still) { dotLanded = true }   // hand the dot to the letter: same spot, same instant
-            withAnimation(.timingCurve(0.25, 0.45, 0.25, 1.06, duration: 0.8)) { angle = 0; inset = 0 }
+        return out
+    }()
+    static var endTime: Double { contact + Double(letterTable.count) / 960 + 0.02 }
+
+    static func letterAngle(at t: Double) -> Double {
+        guard t > contact else { return -WordmarkPiece.rollAngle }
+        let i = min(letterTable.count - 1, Int((t - contact) * 960))
+        return -WordmarkPiece.rollAngle + letterTable[i]
+    }
+
+    /// Letter frame → screen orientation around the pivot (clockwise degrees, y down).
+    static func toScreen(_ p: CGPoint, angle: Double) -> CGPoint {
+        let a = angle * .pi / 180, c = WordmarkPiece.pivot
+        let x = p.x - c.x, y = p.y - c.y
+        return CGPoint(x: c.x + x * cos(a) - y * sin(a), y: c.y + x * sin(a) + y * cos(a))
+    }
+
+    /// The dot's centre on the notch path at screen angle `psi` (degrees from straight down, + = right).
+    static func onPath(psi: Double, angle: Double) -> CGPoint {
+        let centre = toScreen(biteCentre, angle: angle)
+        let r = psi * .pi / 180
+        return CGPoint(x: centre.x + rollRadius * CGFloat(sin(r)), y: centre.y + rollRadius * CGFloat(cos(r)))
+    }
+
+    /// Where the dot hits the notch (wordmark points).
+    static var landing: CGPoint { onPath(psi: landAngle, angle: -WordmarkPiece.rollAngle) }
+
+    static func pose(at t: Double, dropHeight: CGFloat = minDropHeight) -> Pose {
+        guard t.isFinite, t < endTime else { return Pose(angle: 0, dot: dotHome) }
+        let angle = letterAngle(at: t)
+        let landing = self.landing
+
+        // Falling in from above the window: pure gravity from rest, speeding up all the way, fastest at impact.
+        // Gravity is set so a drop of any height arrives at `impactSpeed`.
+        if t < contact {
+            let h = Double(dropHeight)
+            let g = impactSpeed * impactSpeed / (2 * h), fall = 2 * h / impactSpeed
+            let s = max(0, t - (contact - fall))     // time since it let go
+            let height = CGFloat(max(0, h - 0.5 * g * s * s))
+            return Pose(angle: angle, dot: CGPoint(x: landing.x, y: landing.y - height))
         }
-        after(0.30 + fall + 0.7) { onFormed() }
+        // Impact squash: 2 frames at 24 fps, 10% wide and short, anchored on the contact point.
+        let since = t - contact
+        let squash = since < 0.085 ? CGSize(width: 1.1, height: 0.9) : CGSize(width: 1, height: 1)
+
+        // Rolling to the right edge, accelerating (distance ∝ t²).
+        let u = min(1, since / rollTime)
+        let psi = landAngle + (edgeAngle - landAngle) * u * u
+        let inNotch = onPath(psi: psi, angle: angle)
+
+        // Out of the mouth: once the mouth has turned to within reach under the dot, it drops out (gravity, fast) to
+        // its place and rides the letter from there.
+        let lambda = psi + angle                       // the dot's direction in the letter's own frame
+        let gap = abs(lambda - mouthAngle)
+        let exit = max(0, min(1, (55 - gap) / 25))     // 0 = inside the notch, 1 = at home
+        let home = toScreen(dotHome, angle: angle)
+        let k = CGFloat(exit * exit)
+        return Pose(angle: angle,
+                    dot: CGPoint(x: inNotch.x + (home.x - inNotch.x) * k, y: inNotch.y + (home.y - inNotch.y) * k),
+                    squash: squash)
     }
 }
