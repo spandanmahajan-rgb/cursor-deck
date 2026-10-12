@@ -259,5 +259,6 @@ extension MenuBarManager: NSMenuDelegate {
     public func menuWillOpen(_ menu: NSMenu) {
         guard menu === controlCenterMenu else { return }
         controlCenterState?.refresh()
+        UpdateManager.shared.checkForUpdates(userInitiated: false)   // quiet, at most hourly: lights the dot sooner
     }
 }

@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.4.0"
+    public static let currentVersion = "2.4.1"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
@@ -17,12 +17,15 @@ public final class UpdateManager {
 
     private var isChecking = false
     private var periodicTimer: Timer?
+    /// Background checks run at most this often. Was 24 h: a release then took up to a day to light the blue dot
+    /// (users only saw it after choosing Check for Updates). Hourly is far inside GitHub's 60 requests/hour limit.
+    static let backgroundCheckInterval: TimeInterval = 3600
 
     /// Posted on the main queue whenever `availableVersion` changes (menu bar dot, Control Center, quick menu).
     public static let availabilityDidChange = Notification.Name("QueUpdateAvailabilityDidChange")
     private static let availableVersionKey = "Que_availableUpdateVersion"
 
-    /// A newer version found by any check, remembered across launches (a background check runs at most once a day),
+    /// A newer version found by any check, remembered across launches (a background check runs at most once an hour),
     /// or nil when Que is up to date. Shown as a blue dot in the menu bar icon; nothing pops up on its own.
     public private(set) var availableVersion: String? = {
         guard let stored = UserDefaults.standard.string(forKey: availableVersionKey),
@@ -41,14 +44,14 @@ public final class UpdateManager {
         NotificationCenter.default.post(name: Self.availabilityDidChange, object: self)
     }
 
-    /// Checks shortly after launch, then keeps checking while Que runs (people rarely quit a menu bar app).
-    /// Each background check is still throttled to once every 24 hours.
+    /// Checks shortly after launch, then keeps checking while Que runs (people rarely quit a menu bar app), and when the
+    /// Control Center opens. Each background check is throttled to once an hour.
     public func startBackgroundChecks() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
             self?.checkForUpdates(userInitiated: false)
         }
         periodicTimer?.invalidate()
-        periodicTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+        periodicTimer = Timer.scheduledTimer(withTimeInterval: Self.backgroundCheckInterval, repeats: true) { [weak self] _ in
             self?.checkForUpdates(userInitiated: false)
         }
         periodicTimer?.tolerance = 600
@@ -60,10 +63,10 @@ public final class UpdateManager {
     /// - Parameter userInitiated: If true, shows an alert when already up-to-date or on error. If false, fails silently.
     public func checkForUpdates(userInitiated: Bool) {
         if !userInitiated {
-            // Background check: throttle to at most once every 24 hours
+            // Background check: throttle to at most once an hour (backgroundCheckInterval)
             let lastCheck = UserDefaults.standard.double(forKey: "CursorDeck_lastBackgroundCheck")
             let now = Date().timeIntervalSince1970
-            if now - lastCheck < 86400 {
+            if now - lastCheck < Self.backgroundCheckInterval - 60 {
                 return
             }
         }

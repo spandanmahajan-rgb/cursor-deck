@@ -17,8 +17,6 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
 
     /// Window content width in points; the height follows the content.
     static let width: CGFloat = 380
-    /// The artwork slot at the top (points). Quetie artwork: export 3x = 480 x 480 px PNG, transparent background.
-    static let artworkSize: CGFloat = 160
 
     private var window: NSWindow?
     /// Opens the menu bar panel (set by the app): the tour's last button sends the user there to explore.
@@ -104,6 +102,9 @@ struct WelcomeView: View {
     @State private var page = 0
     @State private var forward = true
     @State private var launchAtLogin = LaunchAtLoginManager.shared.isEnabled
+    /// The logo animation plays once per window; coming back to this page shows the finished logo and text.
+    @State private var introPlayed = false
+    @State private var textVisible = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(onStart: @escaping () -> Void, onOpenQue: @escaping () -> Void = {}, initialPage: Int = 0) {
@@ -155,24 +156,27 @@ struct WelcomeView: View {
 
     private var welcomePage: some View {
         VStack(spacing: 0) {
-            // Artwork slot (Quetie goes here). Until the artwork exists, the app icon stands in.
-            Image(nsImage: NSApp.applicationIconImage ?? NSImage())
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: WelcomeWindowController.artworkSize, height: WelcomeWindowController.artworkSize)
-                .accessibilityHidden(true)
-                .padding(.top, 40)
+            Spacer()   // logo + text sit centred in the space above the button
+            // The "que" wordmark forms itself once (no app-icon box), in the text colour: black in light mode, white in dark.
+            AnimatedWordmark(animate: !introPlayed) {
+                introPlayed = true
+                withAnimation(.easeOut(duration: 0.35)) { textVisible = true }
+            }
+            .foregroundColor(.primary)
+                .padding(.top, 20)   // optical: the title bar area sits above
 
-            Text("Welcome to Que, you Quetie!")
-                .font(.title.weight(.bold))
-                .multilineTextAlignment(.center)
-                .padding(.top, 20)
+            Group {
+                Text("Welcome to Que, you Quetie!")
+                    .font(.title.weight(.bold))
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 36)
 
-            Text("Copy images. Drop them all at once.")
-                .font(.body)
-                .foregroundColor(.secondary)
-                .padding(.top, 6)
+                Text("Copy images. Drop them all at once.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 6)
+            }
+            .opacity(textVisible ? 1 : 0)   // fades in once the logo has formed
 
             Spacer()
 

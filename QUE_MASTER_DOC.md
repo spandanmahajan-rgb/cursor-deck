@@ -47,8 +47,8 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Shake to Clear** | Rapid cursor wiggle | Vigorously shaking the mouse back and forth clears Que with a dissolve animation. |
 | **Control Center** | Click Menu Bar Icon | Opens as a native macOS menu (256×350 pt), so the menu bar icon stays highlighted while it's open, like Battery or Wi-Fi. Switches (Que on/off, Smart Filter, Screenshots, Shake to Clear, Launch at Login), actions (Copy All, Grid, Clear) and the How to Use guide. |
-| **Welcome Tour** | After installing from Que.dmg | A welcome window ("Welcome to Que, you Quetie!") with a short page-by-page tour of the core moves, ending with "Open Que", which opens the menu bar panel. Shown whenever a fresh copy is installed by hand (new or returning users), never after an in-app update or on normal launches. Opens on the screen with the pointer. |
-| **In-App Auto Updater** | "Check for Updates..." | Background checks against GitHub Releases (at launch, then while running, at most once a day). A new version turns the small circle of the menu bar icon blue, and "Check for Updates…" becomes "Update to Que x…" in the Control Center and right-click menu; nothing pops up on its own. Installs with a passwordless in-place app replacement. |
+| **Welcome Tour** | After installing from Que.dmg | A welcome window where the "que" logo forms itself (the dot drops into a "u" and rolls it into the q), then "Welcome to Que, you Quetie!", with a short page-by-page tour of the core moves, ending with "Open Que", which opens the menu bar panel. Shown whenever a fresh copy is installed by hand (new or returning users), never after an in-app update or on normal launches. Opens on the screen with the pointer. |
+| **In-App Auto Updater** | "Check for Updates..." | Background checks against GitHub Releases (at launch, hourly while running, and when the menu opens). A new version turns the small circle of the menu bar icon blue, and "Check for Updates…" becomes "Update to Que x…" in the Control Center and right-click menu; nothing pops up on its own. Installs with a passwordless in-place app replacement. |
 
 ---
 
@@ -120,6 +120,7 @@ Building an interactive accumulator that floats alongside the cursor across macO
     * Geometry: Positioned exactly 4 pt below the status item button bounds, centered horizontally and clamped to screen boundaries.
     * Dismissal: Managed via `NSEvent.addGlobalMonitorForEvents` and `NSEvent.addLocalMonitorForEvents` with a timestamp debounce to prevent double-toggle clicks on the menu bar button.
   * **Result**: Clean, modern macOS floating utility panel with continuous 14 pt rounded corners and zero top pointer.
+  * **Later (v2.3.0)**: replaced by a real `NSMenu` holding the same SwiftUI content, because macOS only keeps the menu bar icon highlighted while a real menu is open. The custom panel was deleted.
 
 ---
 
@@ -168,11 +169,11 @@ Sources/
 │   ├── VideoToGIFConverter.swift      # AVFoundation + CGImageDestination 4s looping GIF converter
 │   ├── ShakeDetector.swift            # Mouse reversal frequency & travel velocity detector
 │   ├── MenuBarManager.swift           # NSStatusItem, status badge, right-click menu, panel controller
-│   ├── DeckControlCenterPanel.swift   # Old floating Control Center panel (unused since 2.3.0; the Control Center is an NSMenu)
 │   ├── DeckControlCenterView.swift    # SwiftUI Control Center (Master switch, toggles, How to Use)
 │   ├── QueLogoAsset.swift             # The Que mark as menu bar / badge template images (1x + 2x)
 │   ├── LaunchAtLoginManager.swift     # LaunchAgent plist persistence (~/Library/LaunchAgents/), CursorDeck migration
 │   ├── WelcomeWindow.swift            # First-launch welcome + tour for new users
+│   ├── AnimatedWordmark.swift         # The welcome logo animation (wordmark split into its shapes)
 │   ├── LegacyAppRename.swift          # One-time CursorDeck.app → Que.app rename after updating from CursorDeck 1.x
 │   └── UpdateManager.swift            # GitHub Releases API client, version compare, in-place swapper
 │
@@ -208,7 +209,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.4.0**
+* **Current Released Version**: **v2.4.1**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 
