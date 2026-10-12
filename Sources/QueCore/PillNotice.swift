@@ -30,11 +30,11 @@ public struct PillNotice {
     public let detail: String?
     public let tone: Tone
     /// Seconds before the notice leaves on its own; `nil` keeps it until it is replaced or dismissed.
-    /// The timer pauses while ⌘ or ⌥ is held, so a notice can't vanish while you're reaching for it.
+    /// The timer pauses while ⌥ is held, so a notice can't vanish while you're reaching for it.
     public let duration: TimeInterval?
-    /// Runs on a click (or ⌘-click) on the pill while the notice is showing.
-    public let primaryAction: (() -> Void)?
     /// Runs on ⌥-click on the pill while the notice is showing.
+    public let primaryAction: (() -> Void)?
+    /// Runs on ⌥⇧-click on the pill while the notice is showing (or ⌥-click when there's no primary action).
     public let alternateAction: (() -> Void)?
 
     public init(
@@ -108,12 +108,12 @@ public extension PillNotice {
     static func boardOffer(name: String, pinCount: Int, cap: Int,
                            addAll: @escaping () -> Void, choose: @escaping () -> Void) -> PillNotice {
         let pins = pinCount == 1 ? "1 pin" : "\(pinCount) pins"
-        let addHint = pinCount > cap ? "⌘-click adds the first \(cap)" : "⌘-click adds all"
-        return PillNotice("\(pins) in “\(name)”", detail: "\(addHint), ⌥-click to choose",
+        let addHint = pinCount > cap ? "⌥-click adds the first \(cap)" : "⌥-click adds all"
+        return PillNotice("\(pins) in “\(name)”", detail: "\(addHint), ⌥⇧-click to choose",
                           tone: .neutral, duration: 10, primaryAction: addAll, alternateAction: choose)
     }
 
-    /// Shown the moment ⌘-click lands, while the board's pins are still being listed (replaces the offer in place).
+    /// Shown the moment ⌥-click lands, while the board's pins are still being listed (replaces the offer in place).
     static func boardPreparing(name: String) -> PillNotice {
         PillNotice("“\(name)” is joining Que", detail: "Getting pins…", tone: .neutral, duration: nil)
     }
@@ -127,7 +127,7 @@ public extension PillNotice {
         PillNotice("“\(name)” is joining Que", detail: "\(done) of \(total)", tone: .neutral, duration: nil)
     }
 
-    /// `alreadyInDeck`: pins of this board skipped because they were already in the deck (⌘-click add).
+    /// `alreadyInDeck`: pins of this board skipped because they were already in the deck (⌥-click add).
     static func boardAdded(added: Int, requested: Int, name: String, alreadyInDeck: Int = 0) -> PillNotice {
         let pins = { (n: Int) in n == 1 ? "1 pin" : "\(n) pins" }
         if added < requested {

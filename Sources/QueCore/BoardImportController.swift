@@ -289,10 +289,10 @@ final class PinMediaFetcher {
 // MARK: - Controller
 
 /// Pinterest board import: a copied board link becomes an *offer* in the pill (nothing is added yet).
-/// ⌘-click adds the board's pins to the deck (only the ones not already there); ⌥-click opens the picker to choose.
+/// ⌥-click adds the board's pins to the deck (only the ones not already there); ⌥⇧-click opens the picker to choose.
 /// Files only ever go into the deck: never Finder.
 public final class BoardImportController {
-    /// Pins loaded at first and added by "⌘-click adds all".
+    /// Pins loaded at first and added by "⌥-click adds all".
     public static let pinCap = 100
 
     private let queueManager: DeckQueueManager
@@ -370,7 +370,7 @@ public final class BoardImportController {
         )
 
         // Decide instantly from what we already know (no network wait): if the deck already holds as many of this
-        // board's pins as "⌘-click adds all" would add, it's already added. Pinterest's count includes a few
+        // board's pins as "⌥-click adds all" would add, it's already added. Pinterest's count includes a few
         // hidden pins (48 reported, 45 served), hence the small margin. The first pins prefetch meanwhile.
         model.loadNextBatch()
         let alreadyIn = pinsInDeck(board).count
@@ -382,7 +382,7 @@ public final class BoardImportController {
         }
     }
 
-    /// ⌘-click on the offer: adds the board's first pins, skipping any already in the deck.
+    /// ⌥-click on the offer: adds the board's first pins, skipping any already in the deck.
     private func addMissing(from model: BoardPickerModel) {
         let inDeck = pinsInDeck(model.board)
         let firstPins = Array(model.pins.prefix(Self.pinCap))

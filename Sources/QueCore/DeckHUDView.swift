@@ -411,10 +411,16 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     // MARK: - Drag & Drop and Click Handling
 
     private var clickHadOption = false
+    private var clickHadShift = false
+
+    /// True from a mouse-down on the pill until that click or drag ends (the panel holds still meanwhile).
+    public private(set) var isPressed = false
 
     public override func mouseDown(with event: NSEvent) {
+        isPressed = true
         if activeNotice?.hasActions == true {
             clickHadOption = event.modifierFlags.contains(.option)
+            clickHadShift = event.modifierFlags.contains(.shift)
             dragStartScreenPoint = NSEvent.mouseLocation
             isDraggingSessionActive = false
             return
@@ -432,11 +438,10 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         let currentScreenPoint = NSEvent.mouseLocation
         let dist = hypot(currentScreenPoint.x - dragStartScreenPoint.x, currentScreenPoint.y - dragStartScreenPoint.y)
 
-        // When ⌘/⌥ is held (the only way to catch the pill), allow a generous 20pt
+        // When ⌥ is held (the only way to catch the pill), allow a generous 20pt
         // threshold so trackpad clicks and resting fingers don't start an accidental drag.
-        let flags = CGEventSource.flagsState(.hidSystemState)
-        let isModifierHeld = event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option)
-            || flags.contains(.maskCommand) || flags.contains(.maskAlternate)
+        let isModifierHeld = event.modifierFlags.contains(.option)
+            || CGEventSource.flagsState(.hidSystemState).contains(.maskAlternate)
         let threshold: CGFloat = isModifierHeld ? 20.0 : 4.0
 
         guard dist > threshold else { return }
@@ -446,13 +451,17 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        isPressed = false
         // If a drag session was active, AppKit handles session end via draggingSession(_:endedAt:operation:)
         guard !isDraggingSessionActive else { return }
 
-        // A notice with actions (e.g. the board offer) answers the click instead of the deck.
+        // A notice with actions (e.g. the board offer) answers the click instead of the deck: ⌥-click runs the
+        // first choice, ⌥⇧-click the other (or ⌥-click alone when the notice only has that one).
         if let notice = activeNotice, notice.hasActions {
-            let action = clickHadOption ? notice.alternateAction : notice.primaryAction
+            let wantsAlternate = clickHadShift || notice.primaryAction == nil
+            let action = wantsAlternate ? notice.alternateAction : notice.primaryAction
             clickHadOption = false
+            clickHadShift = false
             action?()
             return
         }
@@ -518,14 +527,15 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     // MARK: - NSDraggingSource
 
     public func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        // Strictly return .copy so that even when Command (⌘) is held, macOS and target apps
-        // (Google Slides, Chrome, Figma, WhatsApp) do not attempt an illegal .move operation,
-        // allowing Cmd+drag+drop to complete natively!
+        // Strictly return .copy so target apps (Google Slides, Chrome, Figma, WhatsApp) never attempt a .move.
+        // ⌥ still held at the drop means "copy" to macOS, so ⌥ + drag + drop completes without letting go of ⌥
+        // (owner-tested in Slides and WhatsApp). ⌘ held at the drop would mean "move" and be refused.
         return .copy
     }
 
     public func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isDraggingSessionActive = false
+        isPressed = false
         let isAccepted = operation != []
         let logMsg = "[Que] Drag ended at \(screenPoint), operation raw=\(operation.rawValue), accepted=\(isAccepted)\n"
         print(logMsg)

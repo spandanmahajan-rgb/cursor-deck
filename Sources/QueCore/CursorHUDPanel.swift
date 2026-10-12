@@ -13,7 +13,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     private let hudView: DeckHUDView
     private var trackingTimer: Timer?
     private var previousCount: Int = 0
-    private var wasCommandHeld = false
+    private var wasMagnetHeld = false
     private var isDragging = false
     private var isDismissing = false
 
@@ -252,8 +252,15 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             return
         }
 
-        // Freeze panel while mouse button is pressed down so clicks don't jitter
-        if NSEvent.pressedMouseButtons != 0 {
+        // ⌥ pulls the pill under the pointer like a magnet: ⌥ + drag = burst-drop, ⌥ + click = open preview grid.
+        // (⌘ used to as well; dropped so ⌘-click in browsers and design apps never lands on the pill.)
+        let heldFlags = CGEventSource.flagsState(.hidSystemState)
+        // Paused: the pill only follows; ⌥ no longer pulls it under the pointer.
+        let isMagnetHeld = !isTrackingPaused && heldFlags.contains(.maskAlternate)
+
+        // Freeze while a click on the pill itself is held, so clicks don't jitter. A press anywhere else (selecting
+        // text, dragging a window or a file) keeps it following, so it never sits frozen in the way.
+        if NSEvent.pressedMouseButtons != 0 && (hudView.isPressed || isMagnetHeld) {
             return
         }
 
@@ -294,12 +301,6 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         var targetX: CGFloat
         var targetY: CGFloat
 
-        // ⌘ or ⌥ pulls the pill under the pointer like a magnet.
-        // ⌘ + drag = burst-drop, ⌥ + click = open preview grid.
-        let heldFlags = CGEventSource.flagsState(.hidSystemState)
-        // Paused: the pill only follows; ⌘/⌥ no longer pull it under the pointer.
-        let isMagnetHeld = !isTrackingPaused && (heldFlags.contains(.maskCommand) || heldFlags.contains(.maskAlternate))
-
         if isMagnetHeld {
             // Magnet Snap: under the pointer, clamped safely to screen edges. The pointer sits over the pill's
             // left part (its centre for the normal badge), so a wider notice grows to the right of it.
@@ -308,15 +309,15 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             targetX = max(bounds.minX + 6, min(targetX, bounds.maxX - currentW - 6))
             targetY = max(bounds.minY + 6, min(targetY, bounds.maxY - currentH - 6))
 
-            let factor: CGFloat = wasCommandHeld ? 0.85 : 0.92
+            let factor: CGFloat = wasMagnetHeld ? 0.85 : 0.92
             let dx = (targetX - currentOrigin.x) * factor
             let dy = (targetY - currentOrigin.y) * factor
             setFrame(NSRect(x: currentOrigin.x + dx, y: currentOrigin.y + dy, width: currentW, height: currentH), display: sizeChanged)
-            wasCommandHeld = true
+            wasMagnetHeld = true
             return
         }
 
-        wasCommandHeld = false
+        wasMagnetHeld = false
 
         // Free-Flow Mode:
         // Horizontal: Default +22 to right; if the *badge* wouldn't fit, flip to the left of the pointer.
@@ -451,9 +452,8 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     private func scheduleNoticeEnd(after delay: TimeInterval, token: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self, self.noticeToken == token else { return }
-            // Don't pull the notice away while the user is holding ⌘/⌥ to catch the pill.
-            let flags = CGEventSource.flagsState(.hidSystemState)
-            if flags.contains(.maskCommand) || flags.contains(.maskAlternate) {
+            // Don't pull the notice away while the user is holding ⌥ to catch the pill.
+            if CGEventSource.flagsState(.hidSystemState).contains(.maskAlternate) {
                 self.scheduleNoticeEnd(after: 1.0, token: token)
                 return
             }

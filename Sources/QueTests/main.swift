@@ -277,7 +277,7 @@ func testPillNoticeWording() {
     assert(PillNotice.boardOnPrivateProfile().message == "This board is on a private profile")
     let again = PillNotice.boardAlreadyAdded(name: "Refs", choose: {})
     assert(again.message == "“Refs” is already in Que" && again.alternateAction != nil && again.primaryAction == nil,
-           "Re-copied board: says so, ⌥-click still opens the picker, ⌘-click adds nothing")
+           "Re-copied board: says so, ⌥-click opens the picker, nothing is added again")
     assert(PillNotice.boardAdded(added: 5, requested: 5, name: "Refs", alreadyInDeck: 20).detail == "20 pins were already in Que.")
     print("✅ testPillNoticeWording passed!")
 }
@@ -582,7 +582,43 @@ func testConcealedClipboardIsSkipped() {
     print("✅ testConcealedClipboardIsSkipped passed!")
 }
 
+/// Every SF Symbol named in Que's code must exist on macOS 13 (Que's minimum): a missing symbol draws nothing, which
+/// left Shake to Clear's icon empty for a user on an older macOS. Newer symbols need a runtime fallback (`QueSymbol`).
+/// Checked against macOS's own symbol list, from the source files (run from the repo root; skips if either is missing).
+func testSymbolsExistOnMacOS13() {
+    let plistPath = "/System/Library/CoreServices/CoreGlyphs.bundle/Contents/Resources/name_availability.plist"
+    let sourcesDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/QueCore")
+    guard let plist = NSDictionary(contentsOfFile: plistPath),
+          let symbols = plist["symbols"] as? [String: String],
+          let releases = plist["year_to_release"] as? [String: [String: String]],
+          let files = try? FileManager.default.contentsOfDirectory(at: sourcesDir, includingPropertiesForKeys: nil),
+          !files.isEmpty else {
+        print("⚠️ testSymbolsExistOnMacOS13 skipped (symbol list or sources not found)")
+        return
+    }
+    let pattern = try! NSRegularExpression(pattern: #"(?:systemName|systemSymbolName|symbol): "([a-z0-9.]+)""#)
+    var checked = 0
+    for file in files where file.pathExtension == "swift" {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+        for match in pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let name = String(text[Range(match.range(at: 1), in: text)!])
+            if text.contains("// SYMBOL-FALLBACK: \(name)") { continue }   // newer symbol with a checked fallback
+            guard let year = symbols[name] else {
+                assert(false, "\(file.lastPathComponent): SF Symbol “\(name)” doesn't exist")
+                continue
+            }
+            let macOS = releases[year]?["macOS"] ?? "99"
+            let major = Double(macOS) ?? 99
+            assert(major <= 13, "\(file.lastPathComponent): SF Symbol “\(name)” needs macOS \(macOS); Que supports 13+. Add a fallback.")
+            checked += 1
+        }
+    }
+    assert(checked > 20, "Expected to find Que's symbols in the sources (found \(checked))")
+    print("✅ testSymbolsExistOnMacOS13 passed! (\(checked) symbol uses)")
+}
+
 testQueueAddAndClear()
+testSymbolsExistOnMacOS13()
 testConcealedClipboardIsSkipped()
 testPasteboardWriterPayload()
 testDragPasteboard()

@@ -14,8 +14,7 @@ No setup and no permissions: Que never asks for Accessibility, Screen Recording 
 
 - **Collects as you copy.** Copy an image in a browser, Finder or a design app and it joins Que. Screenshots go straight in too, without landing on your desktop.
 - **Pinterest boards and videos.** Copy a board link to add its pins, or a video link to get a looping GIF.
-- **One drag drops everything.** Hold ⌘, Que snaps under your pointer, drag it onto your slide or canvas.
-- **Copy for chat.** ⌘-click Que, then paste every image at once in WhatsApp, Slack or Telegram.
+- **One drag drops everything.** Hold ⌥, Que snaps under your pointer, drag it onto your slide, canvas or chat.
 - **Preview and pick.** ⌥-click Que to see what's in it, select images, drag some out or remove them.
 - **Stays out of your way.** Ignores shapes copied inside Illustrator, Photoshop and Figma, skips password-manager copies, and pauses with one switch.
 - **Light.** Pure Swift and AppKit, about 15 MB of memory and no CPU while idle.
@@ -33,7 +32,7 @@ No setup and no permissions: Que never asks for Accessibility, Screen Recording 
 ## How to use
 
 1. **Copy images** (⌘C or right-click › Copy Image). Que appears next to your pointer with a count.
-2. **Hold ⌘.** Que snaps under your pointer.
+2. **Hold ⌥.** Que snaps under your pointer.
 3. **Drag** onto Slides, Keynote, Figma, Slack, WhatsApp or Finder and let go. Everything drops at once.
 
 Click the menu bar icon for the switches, Copy All, Grid and Clear, and the full **How to Use** guide. Right-click it for a quick menu.

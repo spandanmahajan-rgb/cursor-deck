@@ -6,6 +6,15 @@ import AppKit
 import Foundation
 import SwiftUI
 
+/// SF Symbols that only exist on newer macOS, with a fallback for older systems (Que runs on macOS 13+).
+/// A missing symbol draws nothing, which left Shake to Clear's icon circle empty on macOS 13–15.
+enum QueSymbol {
+    /// Shake to Clear: "pointer.arrow.motionlines" arrived in macOS 26; "cursorarrow.motionlines" exists since 11.
+    // SYMBOL-FALLBACK: pointer.arrow.motionlines
+    static let shake: String = NSImage(systemSymbolName: "pointer.arrow.motionlines", accessibilityDescription: nil) != nil
+        ? "pointer.arrow.motionlines" : "cursorarrow.motionlines"
+}
+
 // MARK: - Popover Material
 
 /// The same material a native macOS popover uses. SwiftUI's `Material.ultraThin` blurred twice as strongly as a real
@@ -266,7 +275,7 @@ public struct DeckControlCenterView: View {
                 // Shake Clear
                 listToggleRow(
                     id: "shake",
-                    symbol: "pointer.arrow.motionlines",
+                    symbol: QueSymbol.shake,
                     title: "Shake to Clear",
                     isOn: state.isShakeClearEnabled,
                     action: { state.toggleShakeClear() }
@@ -683,29 +692,27 @@ public struct DeckControlCenterView: View {
         GuideItem(id: "screenshots", symbol: "camera.viewfinder", title: "Screenshots", badge: "⌘ ⇧ 4",
                   description: "Take a screenshot as usual and it goes straight into Que, not onto your desktop. Que hides while you pick an area."),
         GuideItem(id: "boards", symbol: "rectangle.stack", title: "Pinterest Boards", badge: "Link",
-                  description: "Copy a board link and Que offers it. ⌘-click Que to add its pins (up to 100, skipping ones already in Que), or ⌥-click to choose pins. Public boards only."),
+                  description: "Copy a board link and Que offers it. ⌥-click Que to add its pins (up to 100, skipping ones already in Que), or ⌥⇧-click to choose pins. Public boards only."),
         GuideItem(id: "videos", symbol: "film.stack", title: "Videos to GIF", badge: "Link",
                   description: "Copy a Pinterest video pin's link, a link ending in .mp4 or .mov, or a video file in Finder, and Que turns it into a looping GIF (up to 4 seconds). YouTube and similar sites aren't supported."),
-        GuideItem(id: "drop", symbol: "arrow.down.doc", title: "Drop on Slides", badge: "⌘ + Drag",
-                  description: "Hold ⌘ so Que snaps under the pointer, then drag it onto Slides, Keynote or Figma. Release ⌘ when the green + appears, then let go."),
-        GuideItem(id: "chat", symbol: "bubble.left.and.bubble.right", title: "Copy for Chat", badge: "⌘ + Click",
-                  description: "⌘-click Que (a ✓ appears), then press ⌘V in WhatsApp, Slack or Telegram to paste every image at once."),
+        GuideItem(id: "drop", symbol: "arrow.down.doc", title: "Drop on Slides", badge: "⌥ + Drag",
+                  description: "Hold ⌥ so Que snaps under the pointer, then drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go. Everything lands at once."),
         GuideItem(id: "grid", symbol: "square.grid.2x2", title: "Preview Grid", badge: "⌥ + Click",
                   description: "⌥-click Que to see everything in it. Click images to select them (⇧-click selects a range), then drag them out together or remove them with the trash button. Images you drag out stay in Que."),
-        GuideItem(id: "shake", symbol: "pointer.arrow.motionlines", title: "Shake to Clear", badge: "Shake",
+        GuideItem(id: "shake", symbol: QueSymbol.shake, title: "Shake to Clear", badge: "Shake",
                   description: "Shake the pointer quickly from side to side to clear Que."),
         GuideItem(id: "messages", symbol: "text.bubble", title: "Que Messages", badge: nil,
-                  description: "Que grows to tell you what's happening, like a board being added. When a message offers a choice, click Que for the first option or ⌥-click for the other."),
+                  description: "Que grows to tell you what's happening, like a board being added. When a message offers a choice, ⌥-click Que for the first option or ⌥⇧-click for the other."),
     ]
 
     static let settingsGuide: [GuideItem] = [
         GuideItem(id: "switch", symbol: "power", title: "Pause Que", badge: nil,
-                  description: "The switch at the top pauses or resumes Que. While paused, the dot turns orange, copies and screenshots are ignored, and Que stays out of your way: it doesn't snap to ⌘ or ⌥ or react to clicks or shakes, so you can work freely in apps like Illustrator."),
+                  description: "The switch at the top pauses or resumes Que. While paused, the dot turns orange, copies and screenshots are ignored, and Que stays out of your way: it doesn't snap when you hold ⌥ or react to clicks or shakes, so you can work freely in apps like Illustrator."),
         GuideItem(id: "filter", symbol: "line.3.horizontal.decrease", title: "Smart Filter", badge: nil,
                   description: "Ignores shapes and text copied inside Figma, Photoshop and Illustrator, so only real images are collected."),
         GuideItem(id: "screenshots-setting", symbol: "camera.viewfinder", title: "Screenshots", badge: nil,
                   description: "Turn off to keep screenshots out of Que."),
-        GuideItem(id: "shake-setting", symbol: "pointer.arrow.motionlines", title: "Shake to Clear", badge: nil,
+        GuideItem(id: "shake-setting", symbol: QueSymbol.shake, title: "Shake to Clear", badge: nil,
                   description: "Turn off if you shake the pointer while working and don't want Que cleared."),
         GuideItem(id: "login", symbol: "power.circle", title: "Launch at Login", badge: nil,
                   description: "Starts Que in the menu bar when you log in."),
@@ -861,10 +868,8 @@ public struct KeycapBadgeView: View {
             return ["⌘", "C"]
         case "⌘ ⇧ 4":
             return ["⌘", "⇧", "4"]
-        case "⌘ + Drag":
-            return ["⌘", "+", "Drag"]
-        case "⌘ + Click":
-            return ["⌘", "+", "Click"]
+        case "⌥ + Drag":
+            return ["⌥", "+", "Drag"]
         case "⌥ + Click":
             return ["⌥", "+", "Click"]
         default:

@@ -199,9 +199,9 @@ struct WelcomeView: View {
 
     private static let steps: [Step] = [
         Step(title: "Copy what catches your eye", body: "Every image you copy joins Que, the little badge that follows your pointer."),
-        Step(title: "Hold ⌘ to call Que over", body: "It scoots right under your pointer, ready to go."),
+        Step(title: "Hold ⌥ to call Que over", body: "It scoots right under your pointer, ready to go."),
         Step(title: "Drag, then let go", body: "Drop Que on a slide or canvas and everything lands at once."),
-        Step(title: "⌥-click for a closer look", body: "See what's lined up, pick a few, or clear some out."),
+        Step(title: "⌥-click for a closer look", body: "See what's in Que, pick a few, or clear some out."),
         Step(title: "Shake to start fresh", body: "A quick wiggle of the pointer empties Que."),
         Step(title: "Que lives up here", body: "Click the Que icon in your menu bar for switches, tips and everything else."),
     ]
@@ -315,7 +315,7 @@ struct WelcomeView: View {
             }
         case 2:
             VStack(spacing: 14) {
-                bigKeys("⌘")
+                bigKeys("⌥")
                 // The pointer sits just above the badge's left end, the way Que snaps under it.
                 ZStack(alignment: .topLeading) {
                     QueBadgeMock(count: 3)
@@ -327,7 +327,7 @@ struct WelcomeView: View {
             }
         case 3:
             VStack(spacing: 16) {
-                bigKeys("⌘ + Drag")
+                bigKeys("⌥ + Drag")
                 HStack(spacing: 14) {
                     QueBadgeMock(count: 3)
                     Image(systemName: "arrow.right").font(.title3.weight(.semibold)).foregroundColor(.secondary)
@@ -356,7 +356,7 @@ struct WelcomeView: View {
                 .frame(width: 30 * 4 + 6 * 3)
             }
         case 5:
-            Image(systemName: "pointer.arrow.motionlines")
+            Image(systemName: QueSymbol.shake)
                 .font(.system(size: 64, weight: .regular))
                 .foregroundColor(.primary.opacity(0.85))
         default:
@@ -368,7 +368,7 @@ struct WelcomeView: View {
                     .foregroundColor(.primary)
                     .padding(6)
                     .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.12)))
-                Image(systemName: "battery.75percent").foregroundColor(.secondary)
+                Image(systemName: "battery.75").foregroundColor(.secondary)   // "battery.75percent" needs macOS 14
                 Text("9:41").font(.callout.weight(.medium)).foregroundColor(.secondary)
             }
             .font(.body)
