@@ -26,7 +26,7 @@ No setup and no permissions: Que never asks for Accessibility, Screen Recording 
 2. Open it and drag **Que** into **Applications**.
 3. Open **Que**. Its icon appears in the menu bar.
 
-> **First launch:** Que isn't from the App Store, so macOS may say it's from an unidentified developer. Right-click Que in Applications, choose **Open**, then **Open** again. You only need to do this once.
+> **First launch:** Que isn't from the App Store, so the first time you open it macOS says "Que" Not Opened. Click **Done**, then open **System Settings › Privacy & Security**, scroll to the bottom and click **Open Anyway** (confirm with your password or Touch ID if asked). Que opens. You only need to do this once.
 
 **Used CursorDeck?** Que is its new name. Download Que.dmg above, drag Que into Applications and open it; your settings carry over. Then you can move CursorDeck from Applications to the Trash.
 
