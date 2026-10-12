@@ -55,7 +55,7 @@ rm -rf .dmg_staging
 
 # 6. Commit version bump
 git add .
-git commit -m "Release v$VERSION: $NOTES" || true
+git commit -m "Release v$VERSION" -m "$NOTES" || true   # notes are "- " bullet lines, so they go in the body
 # Stop here if the push fails: publishing a release on top of an un-pushed commit would tag old code.
 git push origin main
 

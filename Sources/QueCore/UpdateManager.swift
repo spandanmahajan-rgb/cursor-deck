@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.5.0"
+    public static let currentVersion = "2.5.1"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
@@ -190,8 +190,9 @@ public final class UpdateManager {
     ) {
         let alert = NSAlert()
         alert.messageText = "Que \(remoteVersion) is available"
-        let notes = releaseNotes.count > 1500 ? String(releaseNotes.prefix(1500)) + "…" : releaseNotes
-        alert.informativeText = "A newer version of Que is available (you currently have \(UpdateManager.currentVersion)).\n\nRelease Notes:\n\(notes)"
+        alert.informativeText = "You have version \(UpdateManager.currentVersion)."
+        let items = Self.releaseNoteItems(releaseNotes)
+        if !items.isEmpty { alert.accessoryView = Self.releaseNotesView(items) }
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Update Now")
         alert.addButton(withTitle: "Later")
@@ -206,6 +207,59 @@ public final class UpdateManager {
             }
         }
         // "Later": nothing else happens; the blue dot stays until the update is installed.
+    }
+
+    /// The release notes as short items for the update window. Notes are written as "- " lines; markdown markers are
+    /// stripped, and an old-style paragraph is split into one item per sentence. At most 8 items (the rest are summed up).
+    public static func releaseNoteItems(_ body: String) -> [String] {
+        func clean(_ line: String) -> String {
+            var text = line.trimmingCharacters(in: .whitespaces)
+            while let first = text.first, "-*•".contains(first) { text.removeFirst(); text = text.trimmingCharacters(in: .whitespaces) }
+            return text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        }
+        var lines = body.split(whereSeparator: \.isNewline).map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }   // headings
+            .map(clean).filter { !$0.isEmpty }
+        if lines.count == 1 {   // one long paragraph: one item per sentence
+            // Split after . ! ? followed by a space (NSString's sentence splitter doesn't break before a symbol like ⌘).
+            var sentences: [String] = []
+            var current = ""
+            let chars = Array(lines[0])
+            for (n, ch) in chars.enumerated() {
+                current.append(ch)
+                if ".!?".contains(ch), n + 1 < chars.count, chars[n + 1] == " " {
+                    sentences.append(current.trimmingCharacters(in: .whitespaces)); current = ""
+                }
+            }
+            if !current.trimmingCharacters(in: .whitespaces).isEmpty { sentences.append(current.trimmingCharacters(in: .whitespaces)) }
+            lines = sentences
+        }
+        guard lines.count > 8 else { return lines }
+        return Array(lines.prefix(7)) + ["And a few smaller fixes."]
+    }
+
+    /// "What's new" with a hanging-indent bullet list, as the update window's accessory view.
+    public static func releaseNotesView(_ items: [String], width: CGFloat = 300) -> NSView {
+        let list = NSMutableParagraphStyle()
+        list.headIndent = 14
+        list.tabStops = [NSTextTab(textAlignment: .left, location: 14)]
+        list.paragraphSpacing = 5
+        let heading = NSMutableParagraphStyle()
+        heading.paragraphSpacing = 6
+        let text = NSMutableAttributedString(string: "What's new\n", attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor, .paragraphStyle: heading])
+        for (index, item) in items.enumerated() {
+            text.append(NSAttributedString(string: "•\t\(item)" + (index == items.count - 1 ? "" : "\n"), attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize + 1),
+                .foregroundColor: NSColor.labelColor, .paragraphStyle: list]))
+        }
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.attributedStringValue = text
+        label.preferredMaxLayoutWidth = width
+        label.frame = NSRect(x: 0, y: 0, width: width, height: 10)
+        label.frame.size.height = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)).height ?? 100)
+        return label
     }
 
     /// AUDIT: release assets must be served over HTTPS from github.com's release-download path.

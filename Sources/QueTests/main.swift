@@ -617,8 +617,23 @@ func testSymbolsExistOnMacOS13() {
     print("✅ testSymbolsExistOnMacOS13 passed! (\(checked) symbol uses)")
 }
 
+func testReleaseNotesAsBullets() {
+    print("Running testReleaseNotesAsBullets...")
+    let bullets = UpdateManager.releaseNoteItems("- Hold ⌥ to call Que over.\n* **Faster** drops\n\n• Shake icon on older macOS")
+    assert(bullets == ["Hold ⌥ to call Que over.", "Faster drops", "Shake icon on older macOS"], "Bullet lines come out clean: \(bullets)")
+    let paragraph = UpdateManager.releaseNoteItems("Que now works with one key. ⌘ no longer moves Que, so ⌘-click is safe. Icons show on older macOS.")
+    assert(paragraph.count == 3, "An old-style paragraph becomes one item per sentence: \(paragraph)")
+    let many = UpdateManager.releaseNoteItems((1...12).map { "- Change \($0)" }.joined(separator: "\n"))
+    assert(many.count == 8 && many.last == "And a few smaller fixes.", "Long lists are capped")
+    assert(UpdateManager.releaseNoteItems("## What's new\n- One").first == "One", "Headings are dropped")
+    let view = UpdateManager.releaseNotesView(bullets)
+    assert(view.frame.width == 300 && view.frame.height > 40, "The notes view has a real size")
+    print("✅ testReleaseNotesAsBullets passed!")
+}
+
 testQueueAddAndClear()
 testSymbolsExistOnMacOS13()
+testReleaseNotesAsBullets()
 testConcealedClipboardIsSkipped()
 testPasteboardWriterPayload()
 testDragPasteboard()
