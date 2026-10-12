@@ -105,7 +105,7 @@ public final class MenuBarManager: NSObject {
                 inMenu: true
             )
         )
-        hostingView.frame = NSRect(x: 0, y: 0, width: 256, height: 350)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 256, height: DeckControlCenterView.height)
         let item = NSMenuItem()
         item.view = hostingView
         controlCenterMenu.addItem(item)
@@ -182,6 +182,10 @@ public final class MenuBarManager: NSObject {
         updateItem.target = self
         menu.addItem(updateItem)
 
+        let reportItem = NSMenuItem(title: "Report a Problem…", action: #selector(reportProblem), keyEquivalent: "")
+        reportItem.target = self
+        menu.addItem(reportItem)
+
         menu.addItem(NSMenuItem.separator())
 
         let quitItem = NSMenuItem(title: "Quit Que", action: #selector(quitApp), keyEquivalent: "q")
@@ -248,6 +252,11 @@ public final class MenuBarManager: NSObject {
 
     @objc public func checkForUpdates() {
         UpdateManager.shared.checkForUpdates(userInitiated: true)
+    }
+
+    /// Opens the problem report form in the browser (Que's version, macOS and recent messages filled in).
+    @objc public func reportProblem() {
+        ProblemReport.open()
     }
 
     @objc public func quitApp() {

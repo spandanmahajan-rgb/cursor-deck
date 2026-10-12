@@ -163,6 +163,9 @@ public enum PopoverPage {
 }
 
 public struct DeckControlCenterView: View {
+    /// Fixed panel height (width 256). Was 350; +22 for the "Report a Problem…" line under Check for Updates.
+    public static let height: CGFloat = 372
+
     @ObservedObject public var state: DeckControlCenterState
     public var onDismiss: (() -> Void)?
     /// Shown inside a macOS menu (the menu bar Control Center): the menu supplies the glass, corners and border.
@@ -197,21 +200,21 @@ public struct DeckControlCenterView: View {
         ZStack {
             if currentPage == .controls {
                 controlsPage
-                    .frame(width: 256, height: 350)
+                    .frame(width: 256, height: DeckControlCenterView.height)
                     .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .move(edge: .leading),
                         removal: .move(edge: .leading)
                     ))
             } else {
                 howToUsePage
-                    .frame(width: 256, height: 350)
+                    .frame(width: 256, height: DeckControlCenterView.height)
                     .transition(reduceMotion ? .opacity : .asymmetric(
                         insertion: .move(edge: .trailing),
                         removal: .move(edge: .trailing)
                     ))
             }
         }
-        .frame(width: 256, height: 350)
+        .frame(width: 256, height: DeckControlCenterView.height)
         .clipped()
         .animation(pageAnimation, value: currentPage)
         .modifier(StandaloneGlass(enabled: !inMenu))
@@ -317,7 +320,7 @@ public struct DeckControlCenterView: View {
             dividerView
                 .padding(.top, 6)
 
-            // 5. UTILITY FOOTER (Updates, Quit, and How to Use)
+            // 5. UTILITY FOOTER (How to Use, Updates, Quit, Report a Problem)
             utilityFooter
                 .padding(.horizontal, 14)
                 .padding(.top, 6)
@@ -528,6 +531,38 @@ public struct DeckControlCenterView: View {
 
     private var utilityFooter: some View {
         VStack(spacing: 5) {
+            Button(action: {
+                withAnimation(pageAnimation) {
+                    currentPage = .howToUse
+                }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "questionmark.circle")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.secondary)
+
+                    Text("How to Use")
+                        .font(.callout.weight(.medium))
+                        .foregroundColor(.primary.opacity(0.9))
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.secondary.opacity(0.6))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3.5)
+                .background(isHowToUseHovered ? Color.primary.opacity(0.065) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHowToUseHovered = inside
+                }
+            }
+
             HStack {
                 Button(action: {
                     onDismiss?()
@@ -567,36 +602,19 @@ public struct DeckControlCenterView: View {
                 .help("Quit Que (⌘Q)")
             }
 
-            Button(action: {
-                withAnimation(pageAnimation) {
-                    currentPage = .howToUse
-                }
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.subheadline.weight(.medium))
+            HStack {
+                Button(action: {
+                    onDismiss?()   // close the menu first, then open the form in the browser
+                    ProblemReport.open()
+                }) {
+                    Text("Report a Problem…")
+                        .font(.callout)
                         .foregroundColor(.secondary)
-
-                    Text("How to Use")
-                        .font(.callout.weight(.medium))
-                        .foregroundColor(.primary.opacity(0.9))
-
-                    Spacer()
-
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundColor(.secondary.opacity(0.6))
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3.5)
-                .background(isHowToUseHovered ? Color.primary.opacity(0.065) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .onHover { inside in
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isHowToUseHovered = inside
-                }
+                .buttonStyle(.plain)
+                .help("Opens a short form in your browser")
+
+                Spacer()
             }
         }
     }
@@ -719,7 +737,7 @@ public struct DeckControlCenterView: View {
         GuideItem(id: "actions", symbol: "slider.horizontal.3", title: "Action Bar", badge: nil,
                   description: "Buttons for Copy All, Grid Preview and Clear."),
         GuideItem(id: "menu", symbol: "menubar.rectangle", title: "Quick Menu", badge: "Right-click",
-                  description: "Right-click the menu bar icon to copy, clear, pause, check for updates or quit without opening this panel."),
+                  description: "Right-click the menu bar icon to copy, clear, pause, check for updates, report a problem or quit without opening this panel."),
         GuideItem(id: "privacy", symbol: "lock", title: "Privacy", badge: nil,
                   description: "Copies from password managers are ignored. Images stay in a private temporary folder, never in your own folders, and Que empties when you quit."),
     ]

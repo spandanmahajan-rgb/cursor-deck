@@ -631,9 +631,55 @@ func testReleaseNotesAsBullets() {
     print("✅ testReleaseNotesAsBullets passed!")
 }
 
+/// "Report a Problem…": the form link carries only Que/Mac details and the sanitized text of Que's recent messages.
+/// Never the clipboard, links or board names; "What happened?" is left for the user.
+func testProblemReport() {
+    print("Running testProblemReport...")
+    ProblemReport.resetForTesting()
+    let now = Date()
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString("CLIPBOARD-SECRET https://example.com/private", forType: .string)
+
+    for i in 1...12 { ProblemReport.record(PillNotice("Message \(i)"), at: now.addingTimeInterval(-600)) }
+    ProblemReport.record(PillNotice("12 pins from “My secret board” joined Que", detail: "See https://pinterest.com/x/y"),
+                         at: now.addingTimeInterval(-90))
+    let recent = ProblemReport.recentText(now: now)
+    let lines = recent.split(separator: "\n").filter { !$0.isEmpty && !$0.hasPrefix("Update log") }
+    assert(lines.prefix(10).count == 10 && !recent.contains("Message 3\n") && recent.contains("Message 12"),
+           "Keeps only the last 10 messages: \(recent)")
+    assert(recent.contains("1 min ago  12 pins from “…” joined Que / See [link]"), "Board names and links removed: \(recent)")
+    assert(recent.contains("10 min ago  Message 4"), "Relative times")
+
+    let url = ProblemReport.url(now: now)!.absoluteString
+    assert(url.hasPrefix(ProblemReport.formURL + "?usp=pp_url&"), "Opens the published form, pre-filled")
+    assert(url.contains(ProblemReport.detailsField + "=Que%20") && url.contains(ProblemReport.recentField + "="),
+           "Both Que-filled answers are in the link")
+    assert(!url.contains("entry.54490118"), "\"What happened?\" is left for the user")
+    let decoded = url.removingPercentEncoding ?? ""
+    assert(!decoded.contains("CLIPBOARD-SECRET") && !decoded.contains("example.com") && !decoded.contains("pinterest.com")
+           && !decoded.contains("My secret board"), "No clipboard, links or board names in the link")
+    assert(!url.contains("+"), "Spaces are encoded as %20 (Google reads + as a space)")
+    assert(url.count < 2500, "The link stays a safe length (\(url.count))")
+
+    let details = ProblemReport.details()
+    assert(details.hasPrefix("Que \(UpdateManager.currentVersion), macOS ") &&
+           (details.hasSuffix("Apple silicon") || details.hasSuffix("Intel")), "Details: \(details)")
+
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    assert(ProblemReport.failedUpdateLines(log: "a check\nanother check") == nil, "A healthy update log is left out")
+    let failed = ProblemReport.failedUpdateLines(log: "check\ndownload FAILED: \(home)/Downloads/x.zip")
+    assert(failed?.last == "download FAILED: ~/Downloads/x.zip", "Failed update lines are included, home folder shortened")
+    ProblemReport.resetForTesting()
+    assert(ProblemReport.recentText(now: now).hasPrefix("No messages yet"), "Empty list says so")
+    pasteboard.clearContents()
+    print("✅ testProblemReport passed!")
+}
+
 testQueueAddAndClear()
 testSymbolsExistOnMacOS13()
 testReleaseNotesAsBullets()
+testProblemReport()
 testConcealedClipboardIsSkipped()
 testPasteboardWriterPayload()
 testDragPasteboard()

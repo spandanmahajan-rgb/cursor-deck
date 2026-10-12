@@ -395,6 +395,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         self.notice = notice
         noticeToken &+= 1
         hudView.setNotice(notice)
+        ProblemReport.record(notice)   // for "Report a Problem…" (memory only)
 
         NSAccessibility.post(
             element: NSApp as Any,
