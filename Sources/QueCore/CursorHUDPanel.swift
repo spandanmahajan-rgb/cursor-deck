@@ -59,7 +59,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         didSet {
             guard isSuspended != oldValue else { return }
             alphaValue = isSuspended ? 0 : 1
-            ignoresMouseEvents = isSuspended || isTrackingPaused
+            applyMousePassThrough()
             if !isSuspended { refreshHUD() }
         }
     }
@@ -70,10 +70,33 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     public var isTrackingPaused = false {
         didSet {
             guard isTrackingPaused != oldValue else { return }
-            ignoresMouseEvents = isSuspended || isTrackingPaused
+            applyMousePassThrough()
             hudView.isPaused = isTrackingPaused   // orange dot while paused
             if isTrackingPaused && previewPanel.isVisible { previewPanel.close() }
         }
+    }
+
+    /// Scrolling: the pill sits under the pointer while ⌥ is held, so it used to swallow ⌥ + scroll (zoom in
+    /// Illustrator, Figma, Maps). Scrolling is never something the pill needs, so the first wheel event it sees
+    /// makes the pill click-through until the wheel has been quiet for a moment; the app underneath then gets the
+    /// rest. (The very first tick is lost: events can't be re-posted without a permission.)
+    private static let scrollQuietPeriod: TimeInterval = 0.35
+    private var scrollPassThroughUntil: Date?
+    private var scrollMonitor: Any?
+
+    private func noteScroll() {
+        scrollPassThroughUntil = Date().addingTimeInterval(Self.scrollQuietPeriod)
+        applyMousePassThrough()
+    }
+
+    private func applyMousePassThrough() {
+        if let until = scrollPassThroughUntil, until <= Date() { scrollPassThroughUntil = nil }
+        ignoresMouseEvents = isSuspended || isTrackingPaused || scrollPassThroughUntil != nil
+    }
+
+    public override func sendEvent(_ event: NSEvent) {
+        if event.type == .scrollWheel { noteScroll(); return }
+        super.sendEvent(event)
     }
 
     /// The pill's frame if it is on screen (also while suspended behind the picker), else nil.
@@ -142,6 +165,12 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             if !self.previewPanel.isVisible {
                 self.orderFrontRegardless()
             }
+        }
+
+        // While click-through, scroll events go to other apps: a global monitor keeps the quiet period running.
+        scrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] _ in
+            guard let self, self.scrollPassThroughUntil != nil else { return }
+            self.noteScroll()
         }
 
         refreshHUD()
@@ -238,6 +267,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     }
 
     private func updatePosition() {
+        if scrollPassThroughUntil != nil { applyMousePassThrough() }   // restore clicks once the wheel is quiet
         // Hide only when there is nothing to show (empty deck, no notice) and no drag is in flight
         guard isActive else {
             if isVisible && !isDragging { orderOut(nil) }

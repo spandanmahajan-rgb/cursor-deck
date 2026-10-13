@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.6.0"
+    public static let currentVersion = "2.6.1"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
@@ -281,7 +281,6 @@ public final class UpdateManager {
         alert.informativeText = "Que \(remoteVersion) is downloading in the background. When it's ready, Que will restart to finish installing."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        present(alert)
 
         URLSession.shared.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
             // AUDIT: URLSession deletes `tempFileUrl` the moment this closure returns. The original hopped to
@@ -309,6 +308,7 @@ public final class UpdateManager {
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                if self.downloadAlertShowing { NSApp.abortModal() }   // done: the "downloading" window has served its purpose
                 self.log(stagedURL != nil ? "download ok" : "download FAILED: \(failure ?? "unknown error")")
                 guard let stagedURL = stagedURL else {
                     self.showAlert(
@@ -325,7 +325,14 @@ public final class UpdateManager {
                 }
             }
         }.resume()
+
+        // After the download has started: this window is modal, so showing it first held the download until OK was clicked.
+        downloadAlertShowing = true
+        present(alert)
+        downloadAlertShowing = false
     }
+
+    private var downloadAlertShowing = false
 
     private func installZipUpdate(downloadedFile: URL) {
         let fm = FileManager.default
@@ -578,7 +585,7 @@ public final class UpdateManager {
     }
 
     /// Compares two semver strings (e.g., "1.1.0" vs "1.0.0"). Returns >0 if v1 > v2, <0 if v1 < v2, 0 if equal.
-    static func compare(_ v1: String, _ v2: String) -> Int {
+    public static func compare(_ v1: String, _ v2: String) -> Int {
         // AUDIT: "1.2.0-beta" used to lose its last segment (compactMap dropped "0-beta"), comparing as 1.2.
         func parts(_ v: String) -> [Int] {
             let core = v.split(whereSeparator: { $0 == "-" || $0 == "+" }).first.map(String.init) ?? v

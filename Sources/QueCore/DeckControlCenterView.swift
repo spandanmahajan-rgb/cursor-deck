@@ -163,7 +163,7 @@ public enum PopoverPage {
 }
 
 public struct DeckControlCenterView: View {
-    /// Fixed panel height (width 256). Was 350; +22 for the "Report a Problem…" line under Check for Updates.
+    /// Fixed panel height (width 256); matches the How to Use page. Was 350 before Report a Problem; the 2.6.1 layout keeps 372.
     public static let height: CGFloat = 372
 
     @ObservedObject public var state: DeckControlCenterState
@@ -174,7 +174,6 @@ public struct DeckControlCenterView: View {
     @State public var currentPage: PopoverPage
     @State private var hoveredRow: String? = nil
     @State private var hoveredAction: String? = nil
-    @State private var isHowToUseHovered: Bool = false
     @State private var expandedGuideItem: String? = nil
     @State private var hoveredGuideItem: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -250,62 +249,37 @@ public struct DeckControlCenterView: View {
 
             dividerView
 
-            // 2. CAPTURE PREFERENCES SECTION (Liquid Glass Circular Badges with Switches)
-            sectionHeader("Preferences")
-                .padding(.horizontal, 14)
-                .padding(.top, 7)
-                .padding(.bottom, 3)
-
+            // 2. PREFERENCES (one list: the three capture switches, then Launch at Login)
             VStack(spacing: 2) {
-                // Smart Filter
-                listToggleRow(
-                    id: "filter",
-                    symbol: "line.3.horizontal.decrease",
-                    title: "Smart Filter",
-                    isOn: state.isSmartFilterEnabled,
-                    action: { state.toggleSmartFilter() }
-                )
+                // These only matter while tracking is on, so they fade while paused (they stay adjustable).
+                VStack(spacing: 2) {
+                    listToggleRow(
+                        id: "filter",
+                        symbol: "line.3.horizontal.decrease",
+                        title: "Smart Filter",
+                        isOn: state.isSmartFilterEnabled,
+                        action: { state.toggleSmartFilter() }
+                    )
 
-                // Screenshots
-                listToggleRow(
-                    id: "screenshots",
-                    symbol: "camera.viewfinder",
-                    title: "Screenshots",
-                    isOn: state.isScreenshotWatcherEnabled,
-                    action: { state.toggleScreenshots() }
-                )
+                    listToggleRow(
+                        id: "screenshots",
+                        symbol: "camera.viewfinder",
+                        title: "Screenshots",
+                        isOn: state.isScreenshotWatcherEnabled,
+                        action: { state.toggleScreenshots() }
+                    )
 
-                // Shake Clear
-                listToggleRow(
-                    id: "shake",
-                    symbol: QueSymbol.shake,
-                    title: "Shake to Clear",
-                    isOn: state.isShakeClearEnabled,
-                    action: { state.toggleShakeClear() }
-                )
-            }
-            .padding(.horizontal, 8)
-            // These only matter while tracking is on, so they fade while paused (they stay adjustable).
-            .opacity(state.isTrackingPaused ? 0.45 : 1)
-            .animation(.easeOut(duration: 0.15), value: state.isTrackingPaused)
+                    listToggleRow(
+                        id: "shake",
+                        symbol: QueSymbol.shake,
+                        title: "Shake to Clear",
+                        isOn: state.isShakeClearEnabled,
+                        action: { state.toggleShakeClear() }
+                    )
+                }
+                .opacity(state.isTrackingPaused ? 0.45 : 1)
+                .animation(.easeOut(duration: 0.15), value: state.isTrackingPaused)
 
-            dividerView
-                .padding(.top, 6)
-
-            // 3. DECK ACTIONS (Horizontal Action Row)
-            sectionHeader("Actions")
-                .padding(.horizontal, 14)
-                .padding(.top, 7)
-                .padding(.bottom, 5)
-
-            deckActionsRow
-                .padding(.horizontal, 10)
-
-            dividerView
-                .padding(.top, 7)
-
-            // 4. SYSTEM PREFERENCE (Launch at Login)
-            VStack(spacing: 2) {
                 listToggleRow(
                     id: "launch",
                     symbol: "power",
@@ -315,16 +289,24 @@ public struct DeckControlCenterView: View {
                 )
             }
             .padding(.horizontal, 8)
-            .padding(.top, 4)
+            .padding(.top, 6)
 
             dividerView
-                .padding(.top, 6)
+                .padding(.top, 8)
 
-            // 5. UTILITY FOOTER (How to Use, Updates, Quit, Report a Problem)
-            utilityFooter
+            // 3. DECK ACTIONS (slim row)
+            deckActionsRow
                 .padding(.horizontal, 14)
-                .padding(.top, 6)
-                .padding(.bottom, 8)
+                .padding(.top, 8)
+
+            Spacer(minLength: 0)
+
+            dividerView
+
+            // 4. FOOTER (How to Use, More)
+            utilityFooter
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
         }
     }
 
@@ -353,7 +335,7 @@ public struct DeckControlCenterView: View {
                 set: { _ in state.toggleTracking() }
             ))
             .toggleStyle(MenuSwitchStyle())
-            .accessibilityHint(statusSubtitle)   // keeps VoiceOver's own on/off value
+            .accessibilityHint("Turn off to pause Que. \(statusSubtitle)")   // keeps VoiceOver's own on/off value
         }
     }
 
@@ -361,7 +343,7 @@ public struct DeckControlCenterView: View {
         if state.isTrackingPaused {
             return "Paused"
         } else if state.itemCount == 0 {
-            return "Waiting for its first image"
+            return "Collecting images"
         } else {
             return "\(state.itemCount) in Que"
         }
@@ -431,7 +413,7 @@ public struct DeckControlCenterView: View {
                 .toggleStyle(MenuSwitchStyle())
         }
         .padding(.horizontal, 6)
-        .frame(height: 32)
+        .frame(height: 34)
         .background(isHovered ? Color.primary.opacity(0.07) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .onHover { inside in
@@ -472,7 +454,7 @@ public struct DeckControlCenterView: View {
                 action: { state.clearDeck() }
             )
         }
-        .frame(height: 32)
+        .frame(height: 30)
     }
 
     private func actionButton(
@@ -529,94 +511,93 @@ public struct DeckControlCenterView: View {
 
     // MARK: - Utility Footer
 
+    /// Four menu-style rows (icon, title, optional trailing mark), all the same height and hover highlight.
     private var utilityFooter: some View {
-        VStack(spacing: 5) {
-            Button(action: {
-                withAnimation(pageAnimation) {
-                    currentPage = .howToUse
+        VStack(spacing: 0) {
+            footerRow(
+                id: "howto", symbol: "questionmark.circle", title: "How to Use",
+                trailingChevron: true,
+                action: { withAnimation(pageAnimation) { currentPage = .howToUse } }
+            )
+
+            footerRow(
+                id: "updates", symbol: "arrow.triangle.2.circlepath",
+                title: state.availableUpdate.map { "Update to Que \($0)…" } ?? "Check for Updates…",
+                showsUpdateDot: state.availableUpdate != nil,
+                action: {
+                    onDismiss?()
+                    state.checkForUpdates()
                 }
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundColor(.secondary)
+            )
 
-                    Text("How to Use")
-                        .font(.callout.weight(.medium))
-                        .foregroundColor(.primary.opacity(0.9))
+            footerRow(
+                id: "report", symbol: "exclamationmark.bubble", title: "Report a Problem…",
+                help: "Opens a short form in your browser",
+                action: {
+                    onDismiss?()   // close the menu first, then open the form in the browser
+                    ProblemReport.open()
+                }
+            )
 
-                    Spacer()
+            footerRow(
+                id: "quit", symbol: "rectangle.portrait.and.arrow.right", title: "Quit",
+                help: "Quit Que",
+                action: {
+                    onDismiss?()   // close the menu first; quitting from inside an open menu is deferred
+                    DispatchQueue.main.async { state.quitApp() }
+                }
+            )
+        }
+    }
 
+    private func footerRow(
+        id: String,
+        symbol: String,
+        title: String,
+        trailingChevron: Bool = false,
+        showsUpdateDot: Bool = false,
+        help: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: symbol)
+                    .font(.callout.weight(.medium))
+                    .foregroundColor(.secondary)
+                    .frame(width: 26)   // same column as the icon circles above
+
+                Text(title)
+                    .font(.body)
+                    .foregroundColor(.primary)
+
+                if showsUpdateDot {
+                    // Same blue dot as the menu bar icon; the update window opens from here.
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 6, height: 6)
+                }
+
+                Spacer()
+
+                if trailingChevron {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3.5)
-                .background(isHowToUseHovered ? Color.primary.opacity(0.065) : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .onHover { inside in
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isHowToUseHovered = inside
-                }
-            }
-
-            HStack {
-                Button(action: {
-                    onDismiss?()
-                    state.checkForUpdates()
-                }) {
-                    if let version = state.availableUpdate {
-                        // Same blue dot as the menu bar icon; the update window opens from here.
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 6, height: 6)
-                            Text("Update to Que \(version)…")
-                                .font(.callout)
-                                .foregroundColor(.primary)
-                        }
-                    } else {
-                        Text("Check for Updates…")
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(state.availableUpdate.map { "Update to Que \($0)" } ?? "Check for Updates")
-
-                Spacer()
-
-                Button(action: {
-                    onDismiss?()   // close the menu first; quitting from inside an open menu is deferred
-                    DispatchQueue.main.async { state.quitApp() }
-                }) {
-                    Text("Quit")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut("q", modifiers: .command)
-                .help("Quit Que (⌘Q)")
-            }
-
-            HStack {
-                Button(action: {
-                    onDismiss?()   // close the menu first, then open the form in the browser
-                    ProblemReport.open()
-                }) {
-                    Text("Report a Problem…")
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Opens a short form in your browser")
-
-                Spacer()
+            .padding(.horizontal, 6)
+            .frame(height: 24)
+            .contentShape(Rectangle())
+            .background(hoveredRow == id ? Color.primary.opacity(0.07) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            withAnimation(.easeOut(duration: 0.12)) {
+                hoveredRow = inside ? id : nil
             }
         }
+        .help(help ?? "")
     }
 
     // MARK: - How to Use Page (Slide-over view with clear instructions & hotkeys)

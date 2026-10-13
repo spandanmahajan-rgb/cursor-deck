@@ -428,13 +428,15 @@ public final class BoardImportController {
         guard !pins.isEmpty else { return }
         importToken &+= 1
         let token = importToken
+        let clearsAtStart = queueManager.clearCount   // Que emptied meanwhile → the rest is dropped
         var added = 0, processed = 0
         hudPanel.show(.boardAdding(count: pins.count, name: board.name))
 
         fetcher.fetchInOrder(pins, onItem: { [weak self] index, file in
             guard let self = self else { return }
             processed += 1
-            if let file = file, let item = self.queueManager.add(imageData: file.data, extension: file.ext) {
+            if let file = file, self.queueManager.clearCount == clearsAtStart,
+               let item = self.queueManager.add(imageData: file.data, extension: file.ext) {
                 added += 1
                 self.pinsInDeckByBoard[board.id, default: [:]][pins[index].id] = item.id
             }
@@ -443,6 +445,10 @@ public final class BoardImportController {
             }
         }, completion: { [weak self] rateLimit in
             guard let self = self else { return }
+            if self.queueManager.clearCount != clearsAtStart {
+                if token == self.importToken { self.hudPanel.dismissNotice() }   // progress has no timer
+                return
+            }
             if let retry = rateLimit {
                 self.hudPanel.show(.pinterestRateLimited(retryAfter: retry, partial: (added, pins.count, "Added")))
             } else if added == 0 {

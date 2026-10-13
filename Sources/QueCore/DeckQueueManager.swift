@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 public final class DeckQueueManager {
     public private(set) var items: [DeckItem] = []
     public private(set) var sessionDirectory: URL
+    /// Bumped by every `clear()`, so background jobs can tell the Que they started for was emptied meanwhile.
+    public private(set) var clearCount = 0
 
     // AUDIT: base directory is now stored (clear() used to hard-code it and ignore a custom base)
     private let baseDirectory: URL
@@ -308,6 +310,7 @@ public final class DeckQueueManager {
 
     public func clear() {
         let oldSessionDirectory = self.sessionDirectory
+        clearCount += 1
         items.removeAll()
         DeckThumbnailCache.shared.removeAll()
         

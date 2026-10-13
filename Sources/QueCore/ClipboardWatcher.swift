@@ -50,14 +50,15 @@ public final class ClipboardWatcher {
             // FIX: pausing invalidates everything in flight (retries, downloads, conversions,
             // Pinterest lookups). The original only dropped results that happened to finish
             // while still paused; a pause+resume in quick succession let stale results through.
-            generation &+= 1
+            pauseGeneration &+= 1
             cancelPendingRetries()
             cancelInFlightDownloads()
         }
     }
 
-    /// Bumped on pause/stop. Async work captures it at start and is discarded if it changed.
-    private var generation = 0
+    /// Bumped on pause/stop, and by every clear of Que. Async work captures it at start and is discarded if it changed.
+    private var pauseGeneration = 0
+    private var generation: Int { pauseGeneration &+ queueManager.clearCount }
     private var pendingRetryChangeCount: Int = -1
     private var inFlightTasks: [URLSessionTask] = []
 
@@ -116,7 +117,7 @@ public final class ClipboardWatcher {
     public func stop() {
         timer?.invalidate()
         timer = nil
-        generation &+= 1
+        pauseGeneration &+= 1
         cancelPendingRetries()
         cancelInFlightDownloads()
     }
@@ -267,53 +268,31 @@ public final class ClipboardWatcher {
             }
         }
 
-        // 2. Finder file paths (NSFilenamesPboardType)
-        if let filenames = pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String], !filenames.isEmpty {
-            var captured = false
-            var images: [URL] = []
-            for path in filenames {
-                let url = URL(fileURLWithPath: path)
-                let ext = url.pathExtension.lowercased()
-                if supportedImageExtensions.contains(ext) && !queueManager.owns(url) {
-                    images.append(url)
-                } else if supportedVideoExtensions.contains(ext) && !queueManager.owns(url) {
-                    handleLocalVideoFile(url)
-                    captured = true
-                }
-            }
-            if !images.isEmpty {
-                addFilesInBackground(images)
+        // 2-3. Files copied in Finder: legacy NSFilenamesPboardType paths, else NSURL file URLs
+        var fileURLs = (pasteboard.propertyList(forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")) as? [String] ?? [])
+            .map { URL(fileURLWithPath: $0) }
+        if fileURLs.isEmpty {
+            fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        }
+        var captured = false
+        var images: [URL] = []
+        for url in fileURLs where !queueManager.owns(url) {
+            let ext = url.pathExtension.lowercased()
+            if supportedImageExtensions.contains(ext) {
+                images.append(url)
+            } else if supportedVideoExtensions.contains(ext) {
+                handleLocalVideoFile(url)
                 captured = true
-            }
-            if captured {
-                lastProcessedChangeCount = changeCount
-                cancelPendingRetries()
-                return true
             }
         }
-
-        // 3. File URLs (NSURL)
-        if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL], !fileURLs.isEmpty {
-            var captured = false
-            var images: [URL] = []
-            for url in fileURLs {
-                let ext = url.pathExtension.lowercased()
-                if supportedImageExtensions.contains(ext) && !queueManager.owns(url) {
-                    images.append(url)
-                } else if supportedVideoExtensions.contains(ext) && !queueManager.owns(url) {
-                    handleLocalVideoFile(url)
-                    captured = true
-                }
-            }
-            if !images.isEmpty {
-                addFilesInBackground(images)
-                captured = true
-            }
-            if captured {
-                lastProcessedChangeCount = changeCount
-                cancelPendingRetries()
-                return true
-            }
+        if !images.isEmpty {
+            addFilesInBackground(images)
+            captured = true
+        }
+        if captured {
+            lastProcessedChangeCount = changeCount
+            cancelPendingRetries()
+            return true
         }
 
         // 4-7. Raw image data, in priority order: PNG, JPEG, TIFF (stored as PNG), WebP, GIF
@@ -545,7 +524,7 @@ public final class ClipboardWatcher {
             }
             // FIX: sniff the real format. The URL extension is often missing/wrong on CDNs, and an
             // HTML error page used to be saved as "image.jpg" and added to the deck.
-            guard let ext = ClipboardWatcher.imageExtension(for: data) else { ticket.finish(.failed); return }
+            guard let ext = PinMediaFetcher.imageExtension(for: data) else { ticket.finish(.failed); return }
             DispatchQueue.main.async {
                 guard let self = self else { ticket.finish(.cancelled); return }
                 self.finishJob(ticket, gen: gen, data: data, ext: ext)
@@ -553,12 +532,6 @@ public final class ClipboardWatcher {
         }
         track(task)
         task.resume()
-    }
-
-    private static func imageExtension(for data: Data) -> String? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let uti = CGImageSourceGetType(source) else { return nil }
-        return UTType(uti as String)?.preferredFilenameExtension
     }
 }
 
