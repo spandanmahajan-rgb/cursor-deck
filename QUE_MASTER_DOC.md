@@ -40,10 +40,11 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Collect Images** | `⌘C` or Right-Click Copy | Automatically intercepts copied images from web browsers, Finder, and desktop apps. |
 | **Screenshots** | `⌘⇧3` / `⌘⇧4` / `⌘⇧5` | Directly ingests newly taken desktop screenshots into Que without desktop clutter. Que hides itself while the screenshot overlay is open (⌘⇧4 / ⌘⇧5), but stays visible in screen shares. |
 | **Pinterest to GIF** | Copy Pin URL (`⌘C`) | Detects Pinterest video pin URLs, extracts the MP4/HLS stream, clips up to 4s, converts to high-framerate looping GIF, and queues it. While a video or pin is on its way, Que says so ("Making a GIF / Saving it a spot in Que.") and its dot turns grey and hops until it lands; failures are announced. |
-| **Pinterest Boards** | Copy a board link | Que offers the board ("48 pins in “Board”"). `⌥ + Click` adds its pins to Que (skipping any already there); `⌥⇧ + Click` opens a picker to choose pins. Public boards only; up to 100 at a time, "Load More Pins" for the rest. |
+| **Pinterest Boards** | Copy a board link | Que offers the board ("48 pins in “Board”"). `⌥ + Click` opens a picker to choose pins; `⌥⇧ + Click` adds its pins to Que (skipping any already there). Public boards only; up to 100 at a time, "Load More Pins" for the rest. |
 | **Que Messages** | Automatic | Status and errors appear inside Que itself, which grows from its left edge to fit the text (e.g. "Pinterest request limit reached"). |
 | **Drop Anywhere** | `⌥ + Drag` and drop | Hold `⌥` to snap Que to the mouse, drag it onto Google Slides, Keynote, Figma or a chat like WhatsApp, and let go (no need to release `⌥` first). Everything lands at once. `⌘` no longer moves Que (since v2.5), so `⌘`-click in browsers and design apps never lands on it. While you select text or drag something else, Que keeps following the pointer instead of freezing in place. |
 | **Copy All** | Control Center or right-click menu | Puts every image in Que on the clipboard for pasting. (The `⌘ + Click` gesture for this was removed in v2.5: `⌥ + Drag` drops into chats directly.) |
+| **Edit GIF** | Hover a GIF in the Preview Grid, click the pencil | The preview expands into a small editor with the whole source video as a filmstrip. Drag the edges, or the highlighted part, to choose another 0.5 to 8 seconds, check it in the loop, then Update GIF swaps it in place (same spot, nothing duplicated). Cancel or a failure keeps the original. Que keeps the downloaded video next to its GIF until the GIF leaves Que. |
 | **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Shake to Clear** | Rapid cursor wiggle | Vigorously shaking the mouse back and forth clears Que with a dissolve animation. |
 | **Control Center** | Click Menu Bar Icon | Opens as a native macOS menu (256×372 pt), so the menu bar icon stays highlighted while it's open, like Battery or Wi-Fi. Switches (Que on/off, Smart Filter, Screenshots, Shake to Clear, Launch at Login), actions (Copy All, Grid, Clear), then four menu-style rows: How to Use, Check for Updates, Report a Problem and Quit. |
@@ -168,7 +169,8 @@ Sources/
 │   ├── BoardPickerPanel.swift         # Board picker panel (grows out of the pill), SwiftUI grid of pins
 │   ├── PillNotice.swift               # The one message type the pill shows, plus its wording catalogue
 │   ├── OverlayScrollers.swift         # Thin overlay scroll bars without a track (TracklessScroller) in all panels
-│   ├── VideoToGIFConverter.swift      # AVFoundation + CGImageDestination 4s looping GIF converter
+│   ├── VideoToGIFConverter.swift      # AVFoundation + CGImageDestination 4s looping GIF converter (optional start time)
+│   ├── GIFSegmentEditor.swift         # Edit GIF: pick another 0.5–8 s part of the source video (filmstrip, handles, replace in place)
 │   ├── ShakeDetector.swift            # Mouse reversal frequency & travel velocity detector
 │   ├── MenuBarManager.swift           # NSStatusItem, status badge, right-click menu, panel controller
 │   ├── DeckControlCenterView.swift    # SwiftUI Control Center (Master switch, toggles, How to Use)
@@ -212,7 +214,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.6.1**
+* **Current Released Version**: **v2.7.0**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 

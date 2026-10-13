@@ -5,6 +5,7 @@
 import Foundation
 import AppKit
 import ImageIO
+import AVFoundation
 import QueCore
 
 func createMockPNGData() -> Data {
@@ -273,6 +274,12 @@ func testPillNoticeWording() {
     assert(partial.detail?.hasPrefix("Added 12 of 48.") == true, "Partial rate limit must report progress")
     assert(PillNotice.boardOffer(name: "Refs", pinCount: 512, cap: 100, addAll: {}, choose: {}).detail?
         .contains("first 100") == true, "Big boards must say only the first 100 are added")
+    var chose = false, addedAll = false
+    let offer = PillNotice.boardOffer(name: "Refs", pinCount: 48, cap: 100, addAll: { addedAll = true }, choose: { chose = true })
+    offer.primaryAction?()
+    assert(chose && !addedAll, "⌥-click on a board offer opens the picker")
+    offer.alternateAction?()
+    assert(addedAll, "⌥⇧-click on a board offer adds the batch")
     assert(PillNotice.boardAdded(added: 45, requested: 48, name: "Refs").tone == .warning)
     assert(PillNotice.boardAdded(added: 3, requested: 3, name: "Refs").duration == 2, "Plain confirmation is brief")
     let prep = PillNotice.boardPreparing(name: "Refs")
@@ -699,6 +706,267 @@ func testProblemReport() {
     print("✅ testProblemReport passed!")
 }
 
+// MARK: - GIF editor
+
+/// A 10 s, 10 fps H.264 video whose red channel steps up every second (second n ≈ red n × 25), so a GIF's first frame
+/// tells which part of the video it came from.
+func makeSteppedTestVideo(seconds: Int = 10) -> URL {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("que-test-\(UUID().uuidString).mp4")
+    let writer = try! AVAssetWriter(outputURL: url, fileType: .mp4)
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 128, AVVideoHeightKey: 128])
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: 128, kCVPixelBufferHeightKey as String: 128])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+    for frame in 0..<(seconds * 10) {
+        while !input.isReadyForMoreMediaData { usleep(1000) }
+        var buffer: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+        CVPixelBufferLockBaseAddress(buffer!, [])
+        let base = CVPixelBufferGetBaseAddress(buffer!)!.assumingMemoryBound(to: UInt8.self)
+        let bytes = CVPixelBufferGetBytesPerRow(buffer!) * 128
+        for i in stride(from: 0, to: bytes, by: 4) { base[i] = 0; base[i + 1] = 0; base[i + 2] = UInt8(frame / 10 * 25); base[i + 3] = 255 }
+        CVPixelBufferUnlockBaseAddress(buffer!, [])
+        adaptor.append(buffer!, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 10))
+    }
+    input.markAsFinished()
+    let done = DispatchSemaphore(value: 0)
+    writer.finishWriting { done.signal() }
+    done.wait()
+    assert(writer.status == .completed, "Test video written: \(String(describing: writer.error))")
+    return url
+}
+
+func redOfFirstFrame(_ gif: URL) -> Int {
+    let source = CGImageSourceCreateWithURL(gif as CFURL, nil)!
+    let image = CGImageSourceCreateImageAtIndex(source, 0, nil)!
+    var pixel = [UInt8](repeating: 0, count: 4)
+    let ctx = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    return Int(pixel[0])
+}
+
+func waitFor(_ seconds: Double = 20, until done: () -> Bool) {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !done() && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+}
+
+/// A video copied in Finder: its GIF joins Que able to be edited, pointing at the user's own file (never moved or deleted).
+func testCopiedVideoKeepsItsSource() {
+    print("Running testCopiedVideoKeepsItsSource...")
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("com.que.tests.\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    let watcher = ClipboardWatcher(queueManager: queueManager, pasteboard: pasteboard)
+    let usersVideo = makeSteppedTestVideo(seconds: 3)
+    defer { try? FileManager.default.removeItem(at: usersVideo) }
+
+    pasteboard.clearContents()
+    pasteboard.writeObjects([usersVideo as NSURL])
+    watcher.checkForNewClipboardContent()
+    waitFor { queueManager.count == 1 }
+    let gif = queueManager.items.first!
+    assert(gif.fileURL.pathExtension == "gif" && gif.sourceVideoURL == usersVideo, "The GIF remembers the user's video")
+    assert(GIFSegmentEditing.canEdit(gif), "So it gets the edit button")
+    queueManager.remove(id: gif.id)
+    assert(FileManager.default.fileExists(atPath: usersVideo.path), "Removing the GIF leaves the user's video alone")
+    assert(PillNotice.gifEditFailed().tone == .error, "A failed edit after the preview closed is an error notice")
+    print("✅ testCopiedVideoKeepsItsSource passed!")
+}
+
+/// Start/end handles: independent, clamped to the video, never shorter than 0.5 s or longer than 8 s.
+func testGIFSegmentSelection() {
+    print("Running testGIFSegmentSelection...")
+    var s = GIFSegment(sourceDuration: 60)
+    assert(s.start == 0 && s.end == 4 && s.isValid, "Opens on what the instant GIF shows: the first 4 s")
+    s.moveEnd(to: 30)
+    assert(s.end == 8, "The end stops at 8 s long")
+    s.moveStart(to: 7.9)
+    assert(abs(s.start - 7.5) < 0.0001 && s.end == 8, "The start stops 0.5 s before the end; the end stays put")
+    s.moveEnd(to: 70)
+    assert(s.end == 15.5, "Still 8 s at most, from wherever the start is")
+    s.moveStart(to: -3)
+    assert(s.start == 7.5, "The start can't pull the part past 8 s either")
+
+    let late = GIFSegment(sourceDuration: 60, start: 50, length: 4)
+    assert(late.start == 50 && late.end == 54 && late.isValid, "A later part of a long video")
+    let tail = GIFSegment(sourceDuration: 60, start: 59.9, length: 4)
+    assert(tail.start == 59.5 && tail.end == 60 && tail.isValid, "Past the end: clamped to the last 0.5 s")
+    let short = GIFSegment(sourceDuration: 2)
+    assert(short.start == 0 && short.end == 2 && short.isValid, "A 2 s video: the whole video")
+    let tiny = GIFSegment(sourceDuration: 0.3)
+    assert(tiny.length == 0.3 && tiny.isValid, "Shorter than the minimum: the whole video is still allowed")
+    assert(!GIFSegment(sourceDuration: 0).isValid, "A video with no length can't be used")
+
+    assert(GIFSegment.timeLabel(2.44) == "0:02.4" && GIFSegment.timeLabel(65) == "1:05.0"
+           && GIFSegment.timeLabel(59.96) == "1:00.0", "Time labels")
+    assert(GIFSegment.lengthLabel(4) == "4.0 s")
+
+    // Moving the whole part keeps its length exactly and stays inside the video (long and short videos).
+    var moving = GIFSegment(sourceDuration: 60, start: 10, length: 3.7)
+    moving.slide(toStart: 30)
+    assert(moving.start == 30 && abs(moving.length - 3.7) < 1e-9, "Moved later, same length")
+    moving.slide(toStart: 2)
+    assert(moving.start == 2 && abs(moving.length - 3.7) < 1e-9, "Moved earlier, same length")
+    moving.slide(toStart: 58)
+    assert(moving.end == 60 && abs(moving.length - 3.7) < 1e-9 && moving.isValid, "Stops at the end of the video")
+    moving.slide(toStart: -5)
+    assert(moving.start == 0 && abs(moving.length - 3.7) < 1e-9, "Stops at the start of the video")
+    var whole = GIFSegment(sourceDuration: 2)
+    whole.slide(toStart: 1)
+    assert(whole.start == 0 && whole.end == 2, "A part as long as the video can't move")
+    var edges = GIFSegment(sourceDuration: 60, start: 10, length: 4)
+    edges.moveStart(to: 12)
+    assert(edges.start == 12 && edges.end == 14, "Left handle: the end stays put")
+    edges.moveEnd(to: 16)
+    assert(edges.start == 12 && edges.end == 16, "Right handle: the start stays put")
+    assert(edges.contains(12) && edges.contains(15.9) && !edges.contains(16) && !edges.contains(11.9))
+
+    // What a press grabs. Part at x 100–200, handles 10 pt outside it, playhead at 150.
+    func hit(_ x: CGFloat, start: CGFloat = 100, end: CGFloat = 200, playhead: CGFloat? = 150) -> GIFTimelineTarget {
+        GIFTimelineTarget.at(x, startX: start, endX: end, playheadX: playhead)
+    }
+    assert(hit(95) == .startHandle && hit(87) == .startHandle && hit(103) == .startHandle, "Left handle, with slop")
+    assert(hit(205) == .endHandle && hit(213) == .endHandle && hit(197) == .endHandle, "Right handle, with slop")
+    assert(hit(150) == .playhead && hit(153) == .playhead, "The playhead line")
+    assert(hit(120) == .range && hit(180) == .range, "The part's body moves the part")
+    assert(hit(120, playhead: nil) == .range, "No playhead on screen: still the body")
+    assert(hit(50) == .seek && hit(260) == .seek, "Outside the part: seek")
+    assert(hit(101, playhead: 101) == .startHandle, "A handle wins over the playhead sitting on it")
+    // A very short part (3 pt wide): both handles overlap the body; the nearer handle wins, never the wrong one.
+    assert(hit(98, start: 100, end: 103) == .startHandle && hit(106, start: 100, end: 103) == .endHandle)
+
+    let times = VideoToGIFConverter.frameTimes(start: 6, length: 2, sourceDuration: 10, fps: 14)
+    assert(times.count == 28 && times.first == 6 && abs(times.last! - (6 + 27.0 / 14)) < 0.0001, "6–8 s at 14 fps")
+    assert(VideoToGIFConverter.frameTimes(start: 0, length: 4, sourceDuration: 10, fps: 14).count == 56,
+           "Start 0 = the instant GIF's 56 frames, unchanged")
+    assert(VideoToGIFConverter.frameTimes(start: 9, length: 4, sourceDuration: 10, fps: 14).count == 14, "Clamped at the end")
+    assert(VideoToGIFConverter.frameTimes(start: 11, length: 4, sourceDuration: 10, fps: 14).isEmpty, "Past the end: nothing")
+    print("✅ testGIFSegmentSelection passed!")
+}
+
+/// Replacing keeps the item's identity, place and source; a missing item changes nothing.
+func testReplaceGIFInPlace() {
+    print("Running testReplaceGIFInPlace...")
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let png = createMockPNGData()
+    let source = FileManager.default.temporaryDirectory.appendingPathComponent("que-test-\(UUID().uuidString).mp4")
+    try! Data([1, 2, 3]).write(to: source)
+    let adopted = queueManager.adoptSourceVideo(source)!
+    _ = queueManager.add(imageData: png, extension: "png")
+    let gif = queueManager.add(imageData: png, extension: "gif", originalName: nil, sourceVideo: adopted)!
+    _ = queueManager.add(imageData: png, extension: "png")
+    let before = queueManager.items.map { $0.id }
+
+    let updated = queueManager.replaceImage(of: gif.id, with: png + Data([0]), extension: "gif")!
+    assert(queueManager.items.map { $0.id } == before, "Same items, same order, no duplicate")
+    assert(updated.id == gif.id && updated.createdAt == gif.createdAt && updated.sourceVideoURL == adopted,
+           "Identity and source video kept")
+    assert(queueManager.items[1].fileURL == updated.fileURL && updated.fileURL != gif.fileURL
+           && FileManager.default.fileExists(atPath: updated.fileURL.path), "The new GIF is in place")
+    assert(FileManager.default.fileExists(atPath: gif.fileURL.path), "The old file lingers for apps still reading a drop")
+    assert(queueManager.replaceImage(of: UUID(), with: png, extension: "gif") == nil, "Unknown item: nothing happens")
+    assert(queueManager.replaceImage(of: gif.id, with: Data(), extension: "gif") == nil
+           && queueManager.items[1].fileURL == updated.fileURL, "Empty data: the current GIF stays")
+    print("✅ testReplaceGIFInPlace passed!")
+}
+
+/// The source video lives in Que's session folder, goes away with its item, and a user's own file is never deleted.
+func testGIFSourceVideoCleanup() {
+    print("Running testGIFSourceVideoCleanup...")
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let png = createMockPNGData()
+    let download = FileManager.default.temporaryDirectory.appendingPathComponent("que-test-\(UUID().uuidString).mp4")
+    try! Data([1]).write(to: download)
+    let adopted = queueManager.adoptSourceVideo(download)!
+    assert(!FileManager.default.fileExists(atPath: download.path) && queueManager.owns(adopted)
+           && adopted.deletingLastPathComponent() == queueManager.sessionDirectory, "Moved into this session's folder")
+    let gif = queueManager.add(imageData: png, extension: "gif", sourceVideo: adopted)!
+    assert(GIFSegmentEditing.canEdit(gif), "A GIF with its video gets the edit button")
+    assert(!GIFSegmentEditing.canEdit(queueManager.add(imageData: png, extension: "png")!), "Images don't")
+    queueManager.remove(id: gif.id)
+    assert(!FileManager.default.fileExists(atPath: adopted.path), "Removing the GIF removes its downloaded video")
+
+    let usersFile = FileManager.default.temporaryDirectory.appendingPathComponent("que-test-users-\(UUID().uuidString).mov")
+    try! Data([1]).write(to: usersFile)
+    defer { try? FileManager.default.removeItem(at: usersFile) }
+    let fromFinder = queueManager.add(imageData: png, extension: "gif", sourceVideo: usersFile)!
+    queueManager.remove(ids: [fromFinder.id])
+    assert(FileManager.default.fileExists(atPath: usersFile.path), "A video copied from Finder is never deleted")
+    let gone = queueManager.add(imageData: png, extension: "gif",
+                                sourceVideo: queueManager.sessionDirectory.appendingPathComponent("missing.mp4"))!
+    assert(!GIFSegmentEditing.canEdit(gone), "No edit button once the video is gone")
+    print("✅ testGIFSourceVideoCleanup passed!")
+}
+
+/// End to end on a real video: a later part replaces the GIF in place; failures and removals leave everything as it was.
+func testGIFSegmentEditingEndToEnd() {
+    print("Running testGIFSegmentEditingEndToEnd...")
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let video = queueManager.adoptSourceVideo(makeSteppedTestVideo())!
+
+    var instant: Data?
+    VideoToGIFConverter.shared.convert(videoURL: video) { data, _ in instant = data }
+    waitFor { instant != nil }
+    let first = queueManager.add(imageData: createMockPNGData(), extension: "png")!
+    let gif = queueManager.add(imageData: instant!, extension: "gif", sourceVideo: video)!
+    assert(redOfFirstFrame(gif.fileURL) < 15, "The instant GIF starts at 0 s (unchanged)")
+
+    // Editing 6–8 s of the 10 s video.
+    var result: DeckItem?, finished = false
+    GIFSegmentEditing.replaceGIF(of: gif.id, in: queueManager, segment: GIFSegment(sourceDuration: 10, start: 6, length: 2)) {
+        result = $0; finished = true
+    }
+    waitFor { finished }
+    let updated = result!
+    assert(queueManager.items.map { $0.id } == [first.id, gif.id], "Replaced in place: no duplicate, same order")
+    let frames = CGImageSourceGetCount(CGImageSourceCreateWithURL(updated.fileURL as CFURL, nil)!)
+    assert(frames == 28, "2 s at 14 fps = 28 frames (got \(frames))")
+    let red = redOfFirstFrame(updated.fileURL)
+    assert(abs(red - 150) < 15, "The new GIF starts at 6 s (red \(red), expected ~150)")
+    assert(FileManager.default.fileExists(atPath: video.path), "The video stays for further edits")
+
+    // Conversion failure: the video vanished. The GIF in Que is untouched.
+    let moved = video.deletingLastPathComponent().appendingPathComponent("moved.mp4")
+    try! FileManager.default.moveItem(at: video, to: moved)
+    finished = false; result = nil
+    GIFSegmentEditing.replaceGIF(of: gif.id, in: queueManager, segment: GIFSegment(sourceDuration: 10)) {
+        result = $0; finished = true
+    }
+    waitFor { finished }
+    assert(result == nil && queueManager.items[1].fileURL == updated.fileURL
+           && FileManager.default.fileExists(atPath: updated.fileURL.path), "A failed conversion keeps the current GIF")
+    try! FileManager.default.moveItem(at: moved, to: video)
+
+    // An invalid part never starts a conversion.
+    finished = false
+    GIFSegmentEditing.replaceGIF(of: gif.id, in: queueManager, segment: GIFSegment(sourceDuration: 0)) { result = $0; finished = true }
+    assert(finished && result == nil, "Invalid selection: refused at once")
+
+    // The GIF is removed while its new version is being made (preview closed, Que cleared): nothing comes back.
+    finished = false
+    GIFSegmentEditing.replaceGIF(of: gif.id, in: queueManager, segment: GIFSegment(sourceDuration: 10, start: 2)) {
+        result = $0; finished = true
+    }
+    queueManager.clear()   // the old session's files (the video too) linger 60 s, so the conversion itself succeeds
+    waitFor { finished }
+    assert(result == nil && queueManager.isEmpty, "No GIF reappears after Que was cleared")
+    print("✅ testGIFSegmentEditingEndToEnd passed!")
+}
+
+testGIFSegmentSelection()
+testCopiedVideoKeepsItsSource()
+testReplaceGIFInPlace()
+testGIFSourceVideoCleanup()
+testGIFSegmentEditingEndToEnd()
 testQueueAddAndClear()
 testSymbolsExistOnMacOS13()
 testClearCountBumps()

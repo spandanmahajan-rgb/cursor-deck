@@ -109,7 +109,7 @@ public final class DeckQueueManager {
     }
 
     @discardableResult
-    public func add(imageData: Data, extension fileExt: String = "png", originalName: String? = nil) -> DeckItem? {
+    public func add(imageData: Data, extension fileExt: String = "png", originalName: String? = nil, sourceVideo: URL? = nil) -> DeckItem? {
         guard !imageData.isEmpty else { return nil }
         try? FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let itemId = UUID()
@@ -124,7 +124,8 @@ public final class DeckQueueManager {
                 type: .image,
                 fileURL: targetURL,
                 originalFileName: originalName,
-                dataSize: imageData.count
+                dataSize: imageData.count,
+                sourceVideoURL: sourceVideo
             )
             items.append(item)
             DeckThumbnailCache.shared.prewarm(item.fileURL)
@@ -286,12 +287,53 @@ public final class DeckQueueManager {
         return CGImageDestinationFinalize(dest) ? out as Data : nil
     }
 
+    // MARK: - GIF editing
+
+    /// Moves a downloaded video into this session's folder so the GIF editor can use it later. It then goes away with
+    /// its item, with Clear Que, or with the 24 h purge (never kept indefinitely). Returns nil if the move failed.
+    /// shortcut: keeps every download (direct .mp4 links up to 150 MB each) until its GIF leaves Que or the 24 h purge;
+    /// add a size cap if temp-folder use ever becomes a complaint.
+    public func adoptSourceVideo(_ url: URL) -> URL? {
+        let target = sessionDirectory.appendingPathComponent("source_\(UUID().uuidString.prefix(8)).\(url.pathExtension)")
+        guard (try? FileManager.default.moveItem(at: url, to: target)) != nil else { return nil }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        return target
+    }
+
+    /// Swaps an item's image for `data` in place: same id, position, name and source video, so nothing is duplicated
+    /// or reordered. The old file stays on disk for a minute (an app may still be reading a drop of it, as in `clear()`).
+    /// Returns nil, leaving the item untouched, if it's no longer in Que or the new file couldn't be written.
+    @discardableResult
+    public func replaceImage(of id: UUID, with data: Data, extension fileExt: String) -> DeckItem? {
+        guard !data.isEmpty, let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        let old = items[index]
+        let target = sessionDirectory.appendingPathComponent("item_\(index + 1)_\(UUID().uuidString.prefix(6)).\(fileExt)")
+        guard (try? data.write(to: target, options: .atomic)) != nil else { return nil }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        let item = DeckItem(id: old.id, createdAt: old.createdAt, type: old.type, fileURL: target,
+                            originalFileName: old.originalFileName, dataSize: data.count, sourceVideoURL: old.sourceVideoURL)
+        items[index] = item
+        DeckThumbnailCache.shared.evict(old.fileURL)
+        DeckThumbnailCache.shared.prewarm(item.fileURL)
+        notifyObservers()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60.0) {
+            try? FileManager.default.removeItem(at: old.fileURL)
+        }
+        return item
+    }
+
+    /// Deletes an item's file and, if Que downloaded it, its source video (a video copied from Finder is the user's own).
+    private func deleteFiles(of item: DeckItem) {
+        DeckThumbnailCache.shared.evict(item.fileURL)
+        try? FileManager.default.removeItem(at: item.fileURL)
+        if let source = item.sourceVideoURL, owns(source) { try? FileManager.default.removeItem(at: source) }
+    }
+
     @discardableResult
     public func remove(id: UUID) -> DeckItem? {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
         let item = items.remove(at: index)
-        DeckThumbnailCache.shared.evict(item.fileURL)
-        try? FileManager.default.removeItem(at: item.fileURL)
+        deleteFiles(of: item)
         notifyObservers()
         return item
     }
@@ -301,10 +343,7 @@ public final class DeckQueueManager {
         let removed = items.filter { ids.contains($0.id) }
         guard !removed.isEmpty else { return }
         items.removeAll { ids.contains($0.id) }
-        for item in removed {
-            DeckThumbnailCache.shared.evict(item.fileURL)
-            try? FileManager.default.removeItem(at: item.fileURL)
-        }
+        removed.forEach(deleteFiles(of:))
         notifyObservers()
     }
 

@@ -138,6 +138,8 @@ struct WelcomeView: View {
             ))
         }
         .frame(width: WelcomeWindowController.width, height: Self.height)
+        // After the frame: the pages are only as wide as their text, so an overlay on them would shift with the text.
+        .overlay(alignment: .bottom) { if page > 0 { tourNav(page) } }
         .clipped()
         .background(keyboardShortcuts)
     }
@@ -249,45 +251,49 @@ struct WelcomeView: View {
             }
 
             Spacer()
+        }
+    }
 
-            ZStack {
-                pageDots(current: index)
-                HStack {
-                    Button(action: { go(to: index - 1) }) {
-                        Image(systemName: "chevron.left")
-                            .font(.body.weight(.semibold))
-                            .foregroundColor(.secondary)
+    /// Dots, Back and Next live outside the sliding page, so only the illustration and text move.
+    private func tourNav(_ index: Int) -> some View {
+        let isLast = index == Self.tourCount
+        return ZStack {
+            pageDots(current: index)
+            HStack {
+                Button(action: { go(to: index - 1) }) {
+                    Image(systemName: "chevron.left")
+                        .font(.body.weight(.semibold))
+                        .foregroundColor(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(index > 1 ? 1 : 0)
+                .disabled(index <= 1)
+                .accessibilityLabel("Back")
+
+                Spacer()
+
+                if isLast {
+                    Button("Open Que", action: onOpenQue)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                } else {
+                    Button(action: { go(to: index + 1) }) {
+                        Image(systemName: "chevron.right")
+                            .font(.body.weight(.bold))
+                            .foregroundColor(.white)
                             .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
+                            .background(Circle().fill(Color.accentColor))
                     }
                     .buttonStyle(.plain)
-                    .opacity(index > 1 ? 1 : 0)
-                    .disabled(index <= 1)
-                    .accessibilityLabel("Back")
-
-                    Spacer()
-
-                    if isLast {
-                        Button("Open Que", action: onOpenQue)
-                            .controlSize(.large)
-                            .keyboardShortcut(.defaultAction)
-                    } else {
-                        Button(action: { go(to: index + 1) }) {
-                            Image(systemName: "chevron.right")
-                                .font(.body.weight(.bold))
-                                .foregroundColor(.white)
-                                .frame(width: 32, height: 32)
-                                .background(Circle().fill(Color.accentColor))
-                        }
-                        .buttonStyle(.plain)
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityLabel("Next")
-                    }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityLabel("Next")
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.bottom, 24)
         }
+        .padding(.horizontal, 28)
+        .padding(.bottom, 24)
     }
 
     private func pageDots(current: Int) -> some View {
@@ -356,9 +362,15 @@ struct WelcomeView: View {
                 .frame(width: 30 * 4 + 6 * 3)
             }
         case 5:
-            Image(systemName: QueSymbol.shake)
-                .font(.system(size: 64, weight: .regular))
-                .foregroundColor(.primary.opacity(0.85))
+            // Where Que really sits: just below and to the right of the pointer's tip (as on page 2).
+            ZStack(alignment: .topLeading) {
+                QueBadgeMock(count: 3)
+                    .padding(.top, 30)
+                    .padding(.leading, 20)
+                Image(systemName: QueSymbol.shake)
+                    .font(.system(size: 36, weight: .regular))
+                    .foregroundColor(.primary.opacity(0.85))
+            }
         default:
             // A sliver of menu bar with the Que icon picked out.
             HStack(spacing: 18) {

@@ -27,7 +27,7 @@ public final class DeckPreviewPanel: NSPanel {
     private let titleLabel = NSTextField(labelWithString: "Que")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let separator = NSBox()
-    private let selectButton = FirstMouseButton()   // "Select All" / "Select None", like the board picker
+    private let selectButton = PanelPushButton(isPrimary: false)   // "Select All" / "Select None", like the board picker
     private let removeButton = FirstMouseButton()   // trash: removes the selected images
     /// Multi-select: click toggles a tile, ⇧-click selects a range, clicking empty space clears.
     private var selectedIDs: Set<UUID> = []
@@ -38,6 +38,8 @@ public final class DeckPreviewPanel: NSPanel {
     private weak var queueManager: DeckQueueManager?
 
     public var onClose: (() -> Void)?
+    /// An Update GIF that failed after the preview closed (nobody is looking at the editor's own message).
+    public var onEditFailedWhileClosed: (() -> Void)?
     /// Where to collapse to on close (the pill's frame). Falls back to a pill-sized rect at the grid's centre.
     public var collapseTarget: (() -> NSRect?)?
     private var clickOutsideMonitor: Any?
@@ -46,6 +48,8 @@ public final class DeckPreviewPanel: NSPanel {
     /// True while a single thumbnail is being dragged out: the preview must not close under the drag.
     private var isDraggingOut = false
     private let dismissDistance: CGFloat = 90.0
+    /// The "Edit GIF" state (the preview expands into it); nil while showing the grid.
+    private var editor: GIFSegmentEditorView?
 
     public init() {
         super.init(
@@ -97,9 +101,6 @@ public final class DeckPreviewPanel: NSPanel {
         separator.boxType = .separator
         contentContainer.addSubview(separator)
 
-        selectButton.isBordered = false
-        selectButton.font = NSFont.preferredFont(forTextStyle: .body)
-        selectButton.contentTintColor = .controlAccentColor
         selectButton.target = self
         selectButton.action = #selector(selectAllClicked)
         contentContainer.addSubview(selectButton)
@@ -141,6 +142,7 @@ public final class DeckPreviewPanel: NSPanel {
         let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
         guard let hit = content.hitTest(point) else { return false }
         if hit !== gridView && hit.isDescendant(of: gridView) { return true }   // a thumbnail or its ✕
+        if let editor = editor, hit.isDescendant(of: editor) { return true }
         return hit === selectButton || hit === removeButton
     }
 
@@ -294,6 +296,7 @@ public final class DeckPreviewPanel: NSPanel {
             cell.onDragOut = { [weak self] dragging in self?.isDraggingOut = dragging }
             cell.onClick = { [weak self] clicked, modifiers in self?.cellClicked(clicked, index: index, modifiers: modifiers) }
             cell.dragGroup = { [weak self] dragged in self?.dragGroup(for: dragged) ?? [dragged] }
+            cell.onEdit = { [weak self] edited in self?.openEditor(for: edited) }
             cell.isSelected = selectedIDs.contains(item.id)
             cells.append(cell)
             gridView.addSubview(cell)
@@ -308,6 +311,7 @@ public final class DeckPreviewPanel: NSPanel {
         self.queueManager = queueManager
         self.onClose = onClose
         isClosing = false
+        removeEditor()
         openedAt = CACurrentMediaTime()
         selectedIDs = []   // each opening starts with nothing selected
         lastClickedIndex = nil
@@ -360,15 +364,16 @@ public final class DeckPreviewPanel: NSPanel {
             close()
             return
         }
+        if let editor = editor {
+            // The grid catches up when the editor closes; only leave it if its GIF left Que (cleared, removed).
+            if qm.items.contains(where: { $0.id == editor.item.id }) { return }
+            closeEditor()
+            return
+        }
 
         let layout = self.layout(for: qm.count)
         let size = layout.size
-        let bounds = visibleBounds(containing: NSPoint(x: frame.midX, y: frame.midY))
-        var x = frame.minX
-        var y = frame.maxY - size.height   // keep the top edge where it is
-        x = max(bounds.minX + 8, min(x, bounds.maxX - size.width - 8))
-        y = max(bounds.minY + 8, min(y, bounds.maxY - size.height - 8))
-        let targetFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        let targetFrame = anchoredFrame(for: size)
 
         // Top-aligned against the current height; autoresizing lands it at y = 0 when the resize finishes.
         contentContainer.frame = NSRect(x: 0, y: frame.height - size.height, width: size.width, height: size.height)
@@ -386,6 +391,7 @@ public final class DeckPreviewPanel: NSPanel {
     public func tick() {
         guard isVisible, !isClosing, !isDraggingOut else { return }
         if CACurrentMediaTime() - openedAt < 0.35 { return }
+        if editor != nil && NSEvent.pressedMouseButtons != 0 { return }   // dragging a handle past the edge
         let mouse = NSEvent.mouseLocation
         if !frame.insetBy(dx: -dismissDistance, dy: -dismissDistance).contains(mouse) {
             close()
@@ -399,6 +405,7 @@ public final class DeckPreviewPanel: NSPanel {
         removeClickOutsideMonitor()
 
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        editor?.tearDown()   // stop playback now; a GIF already being made still replaces the old one
         let pill = collapseTarget?()
         let collapseRect = reduceMotion ? frame : (pill ?? NSRect(x: frame.minX, y: frame.maxY - 28, width: 58, height: 28))
         hasShadow = false
@@ -408,11 +415,13 @@ public final class DeckPreviewPanel: NSPanel {
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0.0, 0.8, 0.4)   // accelerate into the pill
             self.animator().setFrame(collapseRect, display: true)
             self.contentContainer.animator().alphaValue = 0
+            self.editor?.animator().alphaValue = 0
             // Into the pill: stay opaque so the pill takes over seamlessly. Otherwise fade away.
             if pill == nil || reduceMotion { self.animator().alphaValue = 0 }
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
             self.orderOut(nil)
+            self.removeEditor()
             self.alphaValue = 1.0
             self.contentContainer.alphaValue = 1.0
             self.isClosing = false
@@ -420,6 +429,91 @@ public final class DeckPreviewPanel: NSPanel {
             self.onClose = nil
             cb?()
         })
+    }
+
+    /// Keeps the top-left corner where it is (the panel grows right and down), clamped to the screen.
+    private func anchoredFrame(for size: NSSize) -> NSRect {
+        let bounds = visibleBounds(containing: NSPoint(x: frame.midX, y: frame.midY))
+        let x = max(bounds.minX + 8, min(frame.minX, bounds.maxX - size.width - 8))
+        let y = max(bounds.minY + 8, min(frame.maxY - size.height, bounds.maxY - size.height - 8))
+        return NSRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    // MARK: - Edit GIF
+
+    /// Expands the preview into the GIF editor: the grid fades out while the panel grows to the editor's size.
+    private func openEditor(for item: DeckItem) {
+        guard editor == nil, !isClosing, GIFSegmentEditing.canEdit(item) else { return }
+        let editor = GIFSegmentEditorView(item: item)
+        editor.onCancel = { [weak self] in self?.closeEditor() }
+        editor.onConfirm = { [weak self, weak editor] segment in
+            guard let self = self, let editor = editor else { return }
+            self.confirmEdit(editor, segment: segment)
+        }
+        self.editor = editor
+        let size = GIFSegmentEditorView.size
+        editor.autoresizingMask = [.maxXMargin, .minYMargin]   // pinned top-left while the panel morphs, like the grid
+        editor.frame = NSRect(x: 0, y: frame.height - size.height, width: size.width, height: size.height)
+        editor.alphaValue = 0
+        morphContainer.addSubview(editor)
+        morph(to: anchoredFrame(for: size), showing: editor, hiding: contentContainer)
+    }
+
+    /// Back to the grid (after Cancel, a successful update, or the GIF leaving Que).
+    private func closeEditor() {
+        guard let editor = editor else { return }
+        self.editor = nil
+        editor.tearDown()
+        guard let qm = queueManager, !qm.isEmpty else { editor.removeFromSuperview(); close(); return }
+        let layout = self.layout(for: qm.count)
+        contentContainer.frame = NSRect(x: 0, y: frame.height - layout.size.height,
+                                        width: layout.size.width, height: layout.size.height)
+        layoutContent(layout)
+        rebuildGrid(layout)
+        morph(to: anchoredFrame(for: layout.size), showing: contentContainer, hiding: editor) { [weak editor] in
+            editor?.removeFromSuperview()
+        }
+    }
+
+    /// Cross-fades two states while the panel resizes. A new morph takes over from wherever the last one was.
+    private func morph(to target: NSRect, showing: NSView, hiding: NSView, completion: (() -> Void)? = nil) {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if reduceMotion { setFrame(target, display: true) }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = reduceMotion ? 0.15 : 0.24
+            context.timingFunction = Self.morphCurve
+            if !reduceMotion { self.animator().setFrame(target, display: true) }
+            showing.animator().alphaValue = 1
+            hiding.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            completion?()
+            self?.invalidateShadow()
+        })
+    }
+
+    /// Makes the new GIF; the old one stays in Que until it exists. Closing the preview meanwhile doesn't stop it.
+    private func confirmEdit(_ editor: GIFSegmentEditorView, segment: GIFSegment) {
+        guard let qm = queueManager else { return }
+        editor.setProcessing(true)
+        GIFSegmentEditing.replaceGIF(of: editor.item.id, in: qm, segment: segment) { [weak self, weak qm] updated in
+            guard let self = self else { return }
+            guard self.editor === editor else {   // closed or moved on meanwhile
+                if updated == nil, qm?.items.contains(where: { $0.id == editor.item.id }) == true { self.onEditFailedWhileClosed?() }
+                return
+            }
+            if updated != nil || qm?.items.contains(where: { $0.id == editor.item.id }) != true {
+                self.closeEditor()
+            } else {
+                editor.setProcessing(false)
+                editor.showError("This GIF couldn't be updated. Try again, or choose a shorter part.")
+            }
+        }
+    }
+
+    private func removeEditor() {
+        editor?.tearDown()
+        editor?.removeFromSuperview()
+        editor = nil
     }
 
     // MARK: - Click-outside
@@ -459,6 +553,80 @@ final class FirstMouseButton: NSButton {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// A push button that looks like the board picker's "Add to Que" in a panel that never becomes key, where AppKit would
+/// draw a real push button in its inactive grey. Primary: accent fill, white text. Secondary: a quiet grey surface.
+/// Both brighten on hover and darken while pressed.
+final class PanelPushButton: NSButton {
+    private let isPrimary: Bool
+    private var isHovered = false { didSet { needsDisplay = true } }
+    private var isPressed = false { didSet { needsDisplay = true } }
+    private var trackingArea: NSTrackingArea?
+
+    init(isPrimary: Bool) {
+        self.isPrimary = isPrimary
+        super.init(frame: .zero)
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.cornerCurve = .continuous
+        font = NSFont.preferredFont(forTextStyle: .body)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+    override var title: String { didSet { updateTitleColor() } }
+    override var isEnabled: Bool { didSet { alphaValue = isEnabled ? 1 : 0.45; if !isEnabled { isHovered = false } } }
+
+    /// Fits the title with 10 pt padding each side, 22 pt tall (a regular push button's height).
+    override func sizeToFit() {
+        let width = (title as NSString).size(withAttributes: [.font: font ?? NSFont.systemFont(ofSize: 13)]).width
+        setFrameSize(NSSize(width: ceil(width) + 20, height: 22))
+    }
+
+    private func updateTitleColor() {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: font ?? NSFont.systemFont(ofSize: 13),
+            .foregroundColor: isPrimary ? NSColor.white : NSColor.labelColor,
+            .paragraphStyle: style,
+        ])
+    }
+
+    override func updateLayer() {
+        // Resolved here, where light/dark appearance is current.
+        let fill: NSColor
+        if isPrimary {
+            let accent = NSColor.controlAccentColor
+            fill = isPressed ? (accent.blended(withFraction: 0.2, of: .black) ?? accent)
+                : isHovered ? (accent.blended(withFraction: 0.1, of: .white) ?? accent) : accent
+        } else {
+            fill = NSColor.labelColor.withAlphaComponent(isPressed ? 0.2 : isHovered ? 0.14 : 0.09)
+        }
+        layer?.backgroundColor = fill.cgColor
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        isPressed = true
+        super.mouseDown(with: event)   // tracks until the mouse goes up, then sends the action if released inside
+        isPressed = false
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { if isEnabled { isHovered = true } }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+}
+
 /// One deck item: a square, aspect-filled thumbnail (like the board picker's tiles). Hover shows a remove button.
 /// Drag a thumbnail out to drop just that image somewhere; it stays in the deck.
 final class PreviewThumbnailCell: NSView, NSDraggingSource {
@@ -472,6 +640,9 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
     var onClick: ((PreviewThumbnailCell, NSEvent.ModifierFlags) -> Void)?
     /// The cells dragged together with this one (the selection, or just this cell).
     var dragGroup: ((PreviewThumbnailCell) -> [PreviewThumbnailCell])?
+    /// The hover pencil on a GIF made from a video: opens the GIF editor.
+    var onEdit: ((DeckItem) -> Void)?
+    private var editButton: FirstMouseButton?
     private var mouseDownPoint: NSPoint?
     private let checkmark = NSImageView()
     private var isHovered = false
@@ -572,7 +743,30 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
         deleteButton.action = #selector(deleteClicked)
         addSubview(deleteButton)
         addSubview(checkmark)
+
+        // Edit: the same dark circle, bottom-right, only on GIFs whose whole video Que still has.
+        if GIFSegmentEditing.canEdit(item) {
+            let edit = FirstMouseButton(frame: NSRect(x: bounds.width - size - 4, y: 4, width: size, height: size))
+            edit.isBordered = false
+            edit.wantsLayer = true
+            edit.layer?.cornerRadius = size / 2
+            edit.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+            edit.title = ""
+            edit.image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
+            edit.imagePosition = .imageOnly
+            edit.contentTintColor = .white
+            edit.setAccessibilityLabel("Edit GIF \(position)")
+            edit.toolTip = "Edit GIF"
+            edit.alphaValue = 0
+            edit.target = self
+            edit.action = #selector(editClicked)
+            addSubview(edit)
+            editButton = edit
+        }
     }
+
+    @objc private func editClicked() { onEdit?(item) }
 
     /// Small white-on-dark capsule label, matching the board picker's "In deck" tag.
     private static func badgeLabel(_ text: String) -> NSTextField {
@@ -658,12 +852,19 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
-        guard !isSelected else { return }
-        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; deleteButton.animator().alphaValue = 1.0 }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            editButton?.animator().alphaValue = 1.0   // bottom-right: stays clear of the selection checkmark
+            if !isSelected { deleteButton.animator().alphaValue = 1.0 }
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovered = false
-        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; deleteButton.animator().alphaValue = 0.0 }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            deleteButton.animator().alphaValue = 0.0
+            editButton?.animator().alphaValue = 0.0
+        }
     }
 }

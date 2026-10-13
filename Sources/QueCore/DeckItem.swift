@@ -16,13 +16,16 @@ public struct DeckItem: Identifiable, Equatable {
     public let fileURL: URL
     public let originalFileName: String?
     public let dataSize: Int
+    /// The whole video a GIF was made from, so the GIF editor can pick another moment. nil for everything else.
+    public let sourceVideoURL: URL?
 
-    public init(id: UUID = UUID(), createdAt: Date = Date(), type: DeckItemType, fileURL: URL, originalFileName: String? = nil, dataSize: Int) {
+    public init(id: UUID = UUID(), createdAt: Date = Date(), type: DeckItemType, fileURL: URL, originalFileName: String? = nil, dataSize: Int, sourceVideoURL: URL? = nil) {
         self.id = id
         self.createdAt = createdAt
         self.type = type
         self.fileURL = fileURL
         self.originalFileName = originalFileName
         self.dataSize = dataSize
+        self.sourceVideoURL = sourceVideoURL
     }
 }

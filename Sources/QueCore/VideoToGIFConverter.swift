@@ -37,10 +37,11 @@ public final class VideoToGIFConverter {
 
     // MARK: - Local file -> GIF
 
-    /// Converts a local video file into an animated GIF Data in the background.
-    /// `completion` is always called on the main queue.
+    /// Converts a local video file into an animated GIF Data in the background, starting `start` seconds in
+    /// (0 = the instant GIF; the GIF editor passes the chosen moment). `completion` is always called on the main queue.
     public func convert(
         videoURL: URL,
+        start: Double = 0,
         maxDuration: Double = 4.0,
         fps: Double = 14.0,
         maxWidth: CGFloat = 500.0,
@@ -56,8 +57,7 @@ public final class VideoToGIFConverter {
                 return
             }
 
-            let loopDuration = min(durationSeconds, maxDuration)
-            let totalFrames = max(1, Int(loopDuration * fps))
+            let times = Self.frameTimes(start: start, length: maxDuration, sourceDuration: durationSeconds, fps: fps)
             let frameDuration = 1.0 / fps
 
             let generator = AVAssetImageGenerator(asset: asset)
@@ -71,9 +71,9 @@ public final class VideoToGIFConverter {
             generator.requestedTimeToleranceAfter = tolerance
 
             var frames: [CGImage] = []
-            frames.reserveCapacity(totalFrames)
-            for i in 0..<totalFrames {
-                let time = CMTime(seconds: Double(i) * frameDuration, preferredTimescale: 600)
+            frames.reserveCapacity(times.count)
+            for seconds in times {
+                let time = CMTime(seconds: seconds, preferredTimescale: 600)
                 // FIX: autoreleasepool keeps peak memory flat across the loop.
                 autoreleasepool {
                     if let image = try? generator.copyCGImage(at: time, actualTime: nil) {
@@ -93,6 +93,15 @@ public final class VideoToGIFConverter {
                 completion(finalData, finalData.count)
             }
         }
+    }
+
+    /// The source times (seconds) sampled for a GIF of up to `length` seconds starting at `start`, clamped to the video.
+    /// Empty when `start` is past the end.
+    public static func frameTimes(start: Double, length: Double, sourceDuration: Double, fps: Double) -> [Double] {
+        let from = max(0, start)
+        let span = min(sourceDuration - from, length)
+        guard span > 0, fps > 0 else { return [] }
+        return (0..<max(1, Int(span * fps))).map { from + Double($0) / fps }
     }
 
     // MARK: - HLS stream -> GIF

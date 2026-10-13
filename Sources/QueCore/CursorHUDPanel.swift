@@ -133,6 +133,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
         // The preview grid collapses back into the pill wherever it currently is.
         previewPanel.collapseTarget = { [weak self] in self?.frame }
+        previewPanel.onEditFailedWhileClosed = { [weak self] in self?.show(.gifEditFailed()) }
 
         // Wire up Shake gesture: Discard ENTIRE deck (Clear All)
         shakeDetector.onShakeDetected = { [weak self] in

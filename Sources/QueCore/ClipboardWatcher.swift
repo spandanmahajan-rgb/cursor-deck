@@ -406,16 +406,20 @@ public final class ClipboardWatcher {
     }
 
     @discardableResult
-    private func addCaptured(_ data: Data, ext: String) -> Bool {
-        guard let item = queueManager.add(imageData: data, extension: ext) else { return false }
+    private func addCaptured(_ data: Data, ext: String, sourceVideo: URL? = nil) -> Bool {
+        guard let item = queueManager.add(imageData: data, extension: ext, sourceVideo: sourceVideo) else { return false }
         delegate?.clipboardWatcher(self, didCaptureItem: item)
         return true
     }
 
     /// Ends a job with the outcome of adding `data`, or quietly if Que changed meanwhile (cleared/paused).
-    private func finishJob(_ ticket: WorkTicket, gen: Int, data: Data?, ext: String) {
+    /// `sourceVideo`: the whole video a GIF came from, kept for the GIF editor.
+    private func finishJob(_ ticket: WorkTicket, gen: Int, data: Data?, ext: String, sourceVideo: URL? = nil) {
         guard isCurrent(gen) else { ticket.finish(.cancelled); return }
-        guard let data = data, addCaptured(data, ext: ext) else { ticket.finish(.failed); return }
+        guard let data = data, addCaptured(data, ext: ext, sourceVideo: sourceVideo) else {
+            if let source = sourceVideo, queueManager.owns(source) { try? FileManager.default.removeItem(at: source) }
+            ticket.finish(.failed); return
+        }
         ticket.finish(.added)
     }
 
@@ -453,7 +457,7 @@ public final class ClipboardWatcher {
         // convert() completes on the main queue (the original re-dispatched to main a second time)
         VideoToGIFConverter.shared.convert(videoURL: url) { [weak self] gifData, _ in
             guard let self = self else { ticket.finish(.cancelled); return }
-            self.finishJob(ticket, gen: gen, data: gifData, ext: "gif")
+            self.finishJob(ticket, gen: gen, data: gifData, ext: "gif", sourceVideo: url)   // the user's file: never deleted
         }
     }
 
@@ -500,9 +504,14 @@ public final class ClipboardWatcher {
                     return
                 }
                 VideoToGIFConverter.shared.convert(videoURL: localVideoURL) { [weak self] gifData, _ in
-                    try? FileManager.default.removeItem(at: localVideoURL)
-                    guard let self = self else { ticket.finish(.cancelled); return }
-                    self.finishJob(ticket, gen: gen, data: gifData, ext: "gif")
+                    guard let self = self else {
+                        try? FileManager.default.removeItem(at: localVideoURL)
+                        ticket.finish(.cancelled); return
+                    }
+                    // Keep the whole video next to its GIF for the GIF editor (no second download later).
+                    let kept = gifData != nil && self.isCurrent(gen) ? self.queueManager.adoptSourceVideo(localVideoURL) : nil
+                    if kept == nil { try? FileManager.default.removeItem(at: localVideoURL) }
+                    self.finishJob(ticket, gen: gen, data: gifData, ext: "gif", sourceVideo: kept)
                 }
             }
         }
