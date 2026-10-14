@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.8.1"
+    public static let currentVersion = "2.9.0"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
@@ -124,7 +124,7 @@ public final class UpdateManager {
             if userInitiated {
                 showAlert(
                     title: "Que is up to date",
-                    message: "Version \(cleanCurrentVersion) is the newest version available.",
+                    message: "You have the newest version, \(cleanCurrentVersion).",
                     button: "OK"
                 )
             }
@@ -138,55 +138,37 @@ public final class UpdateManager {
         let body = (json["body"] as? String) ?? "A new version of Que is available."
         let htmlURL = (json["html_url"] as? String) ?? "https://github.com/\(UpdateManager.repoOwner)/\(UpdateManager.repoName)/releases"
 
-        // Search for downloadable zip (preferred for seamless passwordless in-place update) or pkg
-        var downloadURL: URL?
-        var isZip = true
-
-        if let assets = json["assets"] as? [[String: Any]] {
-            // First check for ZIP for silent, passwordless auto-update
-            for asset in assets {
-                if let name = asset["name"] as? String,
-                   let downloadString = asset["browser_download_url"] as? String,
-                   let url = URL(string: downloadString),
-                   isTrustedDownloadURL(url),
-                   name.lowercased().hasSuffix(".zip") {
-                    downloadURL = url
-                    isZip = true
-                    break
-                }
-            }
-
-            // Fallback to PKG if ZIP not present
-            if downloadURL == nil {
-                for asset in assets {
-                    if let name = asset["name"] as? String,
-                       let downloadString = asset["browser_download_url"] as? String,
-                       let url = URL(string: downloadString),
-                       isTrustedDownloadURL(url),
-                       name.lowercased().hasSuffix(".pkg") {
-                        downloadURL = url
-                        isZip = false
-                        break
-                    }
-                }
-            }
-        }
-
         promptUserToUpdate(
             remoteVersion: cleanRemoteVersion,
             releaseNotes: body,
-            downloadURL: downloadURL,
-            fallbackWebURL: URL(string: htmlURL)!,
-            isZip: isZip
+            downloadURL: Self.zipAssetURL(in: json),
+            signatureURL: Self.assetURL(in: json) { $0 == UpdateSignature.assetName },
+            fallbackWebURL: URL(string: htmlURL) ?? URL(string: "https://github.com/\(UpdateManager.repoOwner)/\(UpdateManager.repoName)/releases")!
         )
+    }
+
+    /// The release's Que.zip, only from github.com's release-download path (anything else: no in-app install).
+    public static func zipAssetURL(in json: [String: Any]) -> URL? {
+        assetURL(in: json) { $0.lowercased().hasSuffix(".zip") }
+    }
+
+    /// The first release asset whose name matches, only from this repo's github.com release-download path.
+    public static func assetURL(in json: [String: Any], named matches: (String) -> Bool) -> URL? {
+        let assets = json["assets"] as? [[String: Any]] ?? []
+        return assets.compactMap { asset -> URL? in
+            guard let name = asset["name"] as? String, matches(name),
+                  let string = asset["browser_download_url"] as? String, let url = URL(string: string),
+                  isTrustedDownloadURL(url) else { return nil }
+            return url
+        }.first
     }
 
     private func promptUserToUpdate(
         remoteVersion: String,
         releaseNotes: String,
         downloadURL: URL?,
-        fallbackWebURL: URL,
-        isZip: Bool
+        signatureURL: URL?,
+        fallbackWebURL: URL
     ) {
         let alert = NSAlert()
         alert.messageText = "Que \(remoteVersion) is available"
@@ -200,8 +182,10 @@ public final class UpdateManager {
         let response = present(alert)
         log("prompt for \(remoteVersion): \(response == .alertFirstButtonReturn ? "Update Now" : "Later")")
         if response == .alertFirstButtonReturn {
-            if let downloadURL = downloadURL {
-                performDownloadAndInstall(from: downloadURL, isZip: isZip, remoteVersion: remoteVersion)
+            // 11: only a copy in /Applications updates in place; anywhere else (the DMG, Downloads) gets the release page.
+            // A release without its seal (Que.zip.sig) opens the release page too: nothing unverified is installed.
+            if let downloadURL = downloadURL, let signatureURL = signatureURL, Bundle.main.bundlePath.hasPrefix("/Applications/") {
+                performDownloadAndInstall(from: downloadURL, signatureURL: signatureURL, remoteVersion: remoteVersion)
             } else {
                 NSWorkspace.shared.open(fallbackWebURL)
             }
@@ -264,24 +248,39 @@ public final class UpdateManager {
 
     /// AUDIT: release assets must be served over HTTPS from github.com's release-download path.
     /// Anything else falls back to opening the release page in the browser (no silent install).
-    private func isTrustedDownloadURL(_ url: URL) -> Bool {
+    public static func isTrustedDownloadURL(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == "https",
               url.host?.lowercased() == "github.com" else { return false }
-        return url.path.contains("/releases/download/")
+        // This repo's releases only (any repo's /releases/download/ used to pass).
+        return url.path.lowercased().hasPrefix("/\(repoOwner)/\(repoName)/releases/download/".lowercased())
     }
 
-    private func isTrustedFinalHost(_ host: String?) -> Bool {
+    public static func isTrustedFinalHost(_ host: String?) -> Bool {
         guard let h = host?.lowercased() else { return false }
         return h == "github.com" || h.hasSuffix(".githubusercontent.com")
     }
 
-    private func performDownloadAndInstall(from url: URL, isZip: Bool, remoteVersion: String) {
+    private func performDownloadAndInstall(from url: URL, signatureURL: URL, remoteVersion: String) {
         let alert = NSAlert()
-        alert.messageText = "Downloading update…"
-        alert.informativeText = "Que \(remoteVersion) is downloading in the background. When it's ready, Que will restart to finish installing."
+        alert.messageText = "Getting Que \(remoteVersion)"
+        alert.informativeText = "It downloads in the background. Que restarts by itself when it's ready."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
 
+        // The seal first (a few bytes), then the zip, which is installed only if the seal matches it.
+        URLSession.shared.dataTask(with: signatureURL) { [weak self] sigData, sigResponse, _ in
+            let signature = (sigResponse as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } == true
+                && Self.isTrustedFinalHost(sigResponse?.url?.host) ? sigData.flatMap { String(data: $0, encoding: .utf8) } : nil
+            self?.downloadZip(from: url, signature: signature)
+        }.resume()
+
+        // After the download has started: this window is modal, so showing it first held the download until OK was clicked.
+        downloadAlertShowing = true
+        present(alert)
+        downloadAlertShowing = false
+    }
+
+    private func downloadZip(from url: URL, signature: String?) {
         URLSession.shared.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
             // AUDIT: URLSession deletes `tempFileUrl` the moment this closure returns. The original hopped to
             // the main queue first and used the file afterwards, which only works if the main thread happens
@@ -292,14 +291,20 @@ public final class UpdateManager {
             if let tempFileUrl = tempFileUrl, error == nil {
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     failure = "The server returned HTTP \(http.statusCode)."
-                } else if !(self?.isTrustedFinalHost(response?.url?.host) ?? false) {
+                } else if !Self.isTrustedFinalHost(response?.url?.host) {
                     failure = "The download was redirected to an unexpected host."
                 } else {
                     let staged = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("QueUpdate_\(UUID().uuidString).\(isZip ? "zip" : "pkg")")
+                        .appendingPathComponent("QueUpdate_\(UUID().uuidString).zip")
                     do {
                         try FileManager.default.moveItem(at: tempFileUrl, to: staged)
-                        stagedURL = staged
+                        if let signature = signature, let data = try? Data(contentsOf: staged, options: .mappedIfSafe),
+                           UpdateSignature.isValid(data, signatureBase64: signature) {
+                            stagedURL = staged
+                        } else {
+                            try? FileManager.default.removeItem(at: staged)
+                            failure = Self.unverifiedFailure
+                        }
                     } catch {
                         failure = error.localizedDescription
                     }
@@ -312,25 +317,20 @@ public final class UpdateManager {
                 self.log(stagedURL != nil ? "download ok" : "download FAILED: \(failure ?? "unknown error")")
                 guard let stagedURL = stagedURL else {
                     self.showAlert(
-                        title: "Update failed",
-                        message: "The download could not be completed: \(failure ?? "Unknown error")",
+                        title: "Que couldn't update",
+                        message: failure == Self.unverifiedFailure
+                            ? "This update couldn't be verified as coming from Que, so it wasn't installed. Try again later."
+                            : "The download didn't finish. Check your connection, then try again.",
                         button: "OK"
                     )
                     return
                 }
-                if isZip {
-                    self.installZipUpdate(downloadedFile: stagedURL)
-                } else {
-                    self.installPkgUpdate(downloadedFile: stagedURL)
-                }
+                self.installZipUpdate(downloadedFile: stagedURL)
             }
         }.resume()
-
-        // After the download has started: this window is modal, so showing it first held the download until OK was clicked.
-        downloadAlertShowing = true
-        present(alert)
-        downloadAlertShowing = false
     }
+
+    private static let unverifiedFailure = "signature missing or not matching Que's key"
 
     private var downloadAlertShowing = false
 
@@ -370,7 +370,7 @@ public final class UpdateManager {
                 if let problem = problem {
                     try? fm.removeItem(at: tempExtractDir)   // AUDIT: failed updates used to leave these behind
                     try? fm.removeItem(at: downloadedFile)
-                    self.showAlert(title: "Update failed", message: problem, button: "OK")
+                    self.showAlert(title: "Que couldn't update", message: problem, button: "OK")
                     return
                 }
                 self.swapInExtractedApp(appURL: appURL, tempExtractDir: tempExtractDir, downloadedFile: downloadedFile)
@@ -402,7 +402,7 @@ public final class UpdateManager {
 
     private func swapInExtractedApp(appURL: URL, tempExtractDir: URL, downloadedFile: URL) {
         let fm = FileManager.default
-        let destinationPath = Bundle.main.bundlePath.hasPrefix("/Applications") ? Bundle.main.bundlePath : "/Applications/Que.app"
+        let destinationPath = Bundle.main.bundlePath   // only /Applications copies get here (promptUserToUpdate)
         let currentPID = ProcessInfo.processInfo.processIdentifier
         // The new copy's first launch is an update, not an install: no welcome tour (see WelcomeWindowController).
         UserDefaults.standard.set(true, forKey: WelcomeWindowController.updateInProgressKey)
@@ -423,7 +423,7 @@ public final class UpdateManager {
             if let appleScript = NSAppleScript(source: appleScriptSource) {
                 appleScript.executeAndReturnError(&errorDict)
                 if errorDict == nil {
-                    log("swap: admin copy ok, bundle now owned by \(NSUserName())")
+                    log("swap: admin copy ok, bundle now owned by the user")
                     let relaunch = "PID=\"$1\"; DEST=\"$2\"; LOG=\"$3\"\n"
                         + "log() { echo \"$(date '+%Y-%m-%dT%H:%M:%S') swap: $*\" >> \"$LOG\"; }\n"
                         + "i=0; while kill -0 \"$PID\" 2>/dev/null; do i=$((i + 1)); [ \"$i\" -gt 600 ] && exit 1; sleep 0.1; done\n"
@@ -446,7 +446,7 @@ public final class UpdateManager {
             try? fm.removeItem(at: downloadedFile)
             showAlert(
                 title: "Update not installed",
-                message: "Administrator permission was not granted, so Que was left unchanged.",
+                message: "Que wasn't updated. It needs your administrator password. Try the update again.",
                 button: "OK"
             )
             return
@@ -505,19 +505,6 @@ public final class UpdateManager {
             try? fm.removeItem(at: tempExtractDir)
             try? fm.removeItem(at: downloadedFile)
             showAlert(title: "Update couldn't be installed", message: "Failed to install update: \(error.localizedDescription)", button: "OK")
-        }
-    }
-
-    private func installPkgUpdate(downloadedFile: URL) {
-        let dest = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Que-Installer.pkg")
-        try? FileManager.default.removeItem(at: dest)
-        do {
-            try FileManager.default.copyItem(at: downloadedFile, to: dest)
-            try? FileManager.default.removeItem(at: downloadedFile)
-            NSWorkspace.shared.open(dest)
-            NSApplication.shared.terminate(nil)
-        } catch {
-            showAlert(title: "Update couldn't be installed", message: "Failed to launch package installer: \(error.localizedDescription)", button: "OK")
         }
     }
 

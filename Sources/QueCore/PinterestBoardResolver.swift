@@ -233,7 +233,6 @@ public final class PinterestBoardResolver {
             }
             guard let body = body, response2 != nil,
                   let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                print("[Pinterest] \(resource) failed: HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
                 completion(.failure(.unexpected))
                 return
             }

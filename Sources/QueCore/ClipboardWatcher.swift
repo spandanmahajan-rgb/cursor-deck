@@ -309,8 +309,9 @@ public final class ClipboardWatcher {
                     cancelPendingRetries()
                     return true
                 }
-                if let item = queueManager.add(imageData: data, extension: ext) {
-                    delegate?.clipboardWatcher(self, didCaptureItem: item)
+                let item = queueManager.add(imageData: data, extension: ext)
+                if let item = item { delegate?.clipboardWatcher(self, didCaptureItem: item) }
+                if item != nil || queueManager.isFull {   // full: add() already said "Que is full"
                     lastProcessedChangeCount = changeCount
                     cancelPendingRetries()
                     return true
@@ -327,7 +328,14 @@ public final class ClipboardWatcher {
                 onPinterestBoard?(board.username, board.slug)
                 return true
             }
-            if PinterestMediaResolver.shared.isPinterestURL(urlString) {
+            let isPin = PinterestMediaResolver.shared.isPinterestURL(urlString)
+            if (isPin || isDirectVideoURL(urlString)) && queueManager.isFull {
+                lastProcessedChangeCount = changeCount
+                cancelPendingRetries()
+                queueManager.onFull?()
+                return true
+            }
+            if isPin {
                 lastProcessedChangeCount = changeCount
                 cancelPendingRetries()
                 handlePinterestURL(urlString)
@@ -418,7 +426,7 @@ public final class ClipboardWatcher {
         guard isCurrent(gen) else { ticket.finish(.cancelled); return }
         guard let data = data, addCaptured(data, ext: ext, sourceVideo: sourceVideo) else {
             if let source = sourceVideo, queueManager.owns(source) { try? FileManager.default.removeItem(at: source) }
-            ticket.finish(.failed); return
+            ticket.finish(data != nil && queueManager.isFull ? .cancelled : .failed); return
         }
         ticket.finish(.added)
     }
@@ -476,6 +484,7 @@ public final class ClipboardWatcher {
         // just to read 4 seconds of it.
         let maxBytes: Int64 = 150 * 1024 * 1024
         var sizeObservation: NSKeyValueObservation?
+        let folder = queueManager.sessionDirectory   // Que's own folder: a crash mid-way leaves nothing outside it
 
         let task = downloadSession.downloadTask(with: remoteURL) { [weak self] tempURL, response, error in
             sizeObservation?.invalidate()
@@ -488,8 +497,7 @@ public final class ClipboardWatcher {
                 ticket.finish(.failed); return
             }
 
-            let localVideoURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString + ".mp4")
+            let localVideoURL = folder.appendingPathComponent("download_\(UUID().uuidString).mp4")
             do {
                 try FileManager.default.moveItem(at: tempURL, to: localVideoURL)
             } catch {

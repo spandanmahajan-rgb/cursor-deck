@@ -24,6 +24,14 @@ public final class DeckQueueManager {
         return items.isEmpty
     }
 
+    /// Most images Que holds (a big moodboard is well under it). At the limit new images are turned away, never
+    /// deleted, and `onFull` tells the user to clear Que. Each image is a file in the temp folder: this keeps a
+    /// login item that runs for weeks from quietly filling the disk.
+    public var capacity = 200
+    public var isFull: Bool { items.count >= capacity }
+    /// Main queue. Shows "Que is full" (set in main.swift).
+    public var onFull: (() -> Void)?
+
     private var observers: [UUID: ([DeckItem]) -> Void] = [:]
 
     @discardableResult
@@ -111,6 +119,7 @@ public final class DeckQueueManager {
     @discardableResult
     public func add(imageData: Data, extension fileExt: String = "png", originalName: String? = nil, sourceVideo: URL? = nil) -> DeckItem? {
         guard !imageData.isEmpty else { return nil }
+        guard !isFull else { onFull?(); return nil }
         try? FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let itemId = UUID()
         let filename = originalName ?? "item_\(items.count + 1)_\(itemId.uuidString.prefix(6)).\(fileExt)"
@@ -132,67 +141,6 @@ public final class DeckQueueManager {
             notifyObservers()
             return item
         } catch {
-            print("[DeckQueueManager] Failed to write item: \(error)")
-            return nil
-        }
-    }
-
-    @discardableResult
-    public func add(existingFileURL: URL) -> DeckItem? {
-        let itemId = UUID()
-        let ext = existingFileURL.pathExtension.lowercased()
-        
-        // Google Slides and web canvas editors strictly require PNG/JPEG/GIF/WEBP.
-        // If the source file is HEIC, TIFF, or non-standard, convert it to high-res standard PNG!
-        if ext == "heic" || ext == "tiff" || ext == "tif" || ext == "bmp" {
-            if let image = NSImage(contentsOf: existingFileURL),
-               let tiffData = image.tiffRepresentation,
-               let rep = NSBitmapImageRep(data: tiffData),
-               let pngData = rep.representation(using: .png, properties: [:]) {
-                let filename = "item_\(items.count + 1)_\(itemId.uuidString.prefix(6)).png"
-                let targetURL = sessionDirectory.appendingPathComponent(filename)
-                do {
-                    try pngData.write(to: targetURL, options: .atomic)
-                    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: targetURL.path)
-                    let item = DeckItem(
-                        id: itemId,
-                        type: .image,
-                        fileURL: targetURL,
-                        originalFileName: existingFileURL.lastPathComponent,
-                        dataSize: pngData.count
-                    )
-                    items.append(item)
-                    DeckThumbnailCache.shared.prewarm(item.fileURL)
-                    notifyObservers()
-                    return item
-                } catch {
-                    print("[DeckQueueManager] Failed to convert/write converted PNG: \(error)")
-                }
-            }
-        }
-
-        // Standard copy for directly supported image formats (png, jpg, jpeg, gif, webp, svg)
-        let safeExt = ext.isEmpty ? "png" : ext
-        let filename = "item_\(items.count + 1)_\(itemId.uuidString.prefix(6)).\(safeExt)"
-        let targetURL = sessionDirectory.appendingPathComponent(filename)
-
-        do {
-            try FileManager.default.copyItem(at: existingFileURL, to: targetURL)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: targetURL.path)
-            let fileSize = (try? FileManager.default.attributesOfItem(atPath: targetURL.path)[.size] as? Int) ?? 0
-            let item = DeckItem(
-                id: itemId,
-                type: .fileURL,
-                fileURL: targetURL,
-                originalFileName: existingFileURL.lastPathComponent,
-                dataSize: fileSize
-            )
-            items.append(item)
-            DeckThumbnailCache.shared.prewarm(item.fileURL)
-            notifyObservers()
-            return item
-        } catch {
-            print("[DeckQueueManager] Failed to copy item from \(existingFileURL): \(error)")
             return nil
         }
     }
@@ -239,7 +187,10 @@ public final class DeckQueueManager {
             completion?([])
             return
         }
-        let added = prepared.map { DeckItem(type: .image, fileURL: $0.url, originalFileName: $0.originalName, dataSize: $0.size) }
+        let room = max(0, capacity - items.count)
+        prepared.dropFirst(room).forEach { try? FileManager.default.removeItem(at: $0.url) }
+        if prepared.count > room { onFull?() }
+        let added = prepared.prefix(room).map { DeckItem(type: .image, fileURL: $0.url, originalFileName: $0.originalName, dataSize: $0.size) }
         guard !added.isEmpty else { completion?([]); return }
         items += added
         added.forEach { DeckThumbnailCache.shared.prewarm($0.fileURL) }

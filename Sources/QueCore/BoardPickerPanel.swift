@@ -241,7 +241,7 @@ struct BoardPickerView: View {
     }
 
     private var subtitle: String {
-        if model.pins.isEmpty && model.isLoading { return "Loading pins…" }
+        if model.pins.isEmpty && model.isLoading { return "Getting pins…" }
         let loaded = model.pins.count
         let pins = loaded == 1 ? "1 pin" : "\(loaded) pins"
         if model.hasMore { return "\(pins) loaded of about \(model.board.pinCount)" }

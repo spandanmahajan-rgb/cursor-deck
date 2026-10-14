@@ -15,6 +15,8 @@ public final class ScreenshotWatcher {
     private var processedFilePaths: Set<String> = []
     private var watchedDirectoryURL: URL
     private let monitorQueue = DispatchQueue(label: "com.que.screenshotwatcher", qos: .utility)
+    /// Notices when the user picks another screenshot folder (Screenshot app › Options › Save to).
+    private var folderCheckTimer: Timer?
 
     /// Whether screenshot auto-collection is enabled
     public var isEnabled: Bool = true {
@@ -92,7 +94,6 @@ public final class ScreenshotWatcher {
 
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else {
-            print("[ScreenshotWatcher] Failed to open directory for monitoring: \(path)")
             return
         }
 
@@ -116,10 +117,20 @@ public final class ScreenshotWatcher {
 
         src.resume()
         self.source = src
-        print("[ScreenshotWatcher] Monitoring screenshots in: \(path)")
+
+        folderCheckTimer?.invalidate()
+        folderCheckTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self = self, Self.resolveScreenshotDirectory() != self.watchedDirectoryURL else { return }
+            self.stop()
+            self.start()   // re-resolves the folder
+            self.monitorQueue.async { self.seedExistingFiles() }   // same queue as the change handler; old files aren't new
+        }
+        folderCheckTimer?.tolerance = 10
     }
 
     public func stop() {
+        folderCheckTimer?.invalidate()
+        folderCheckTimer = nil
         source?.cancel()
         source = nil
     }
@@ -134,7 +145,6 @@ public final class ScreenshotWatcher {
             if ready || (attempt >= 15 && size > 500) {   // give up waiting after ~1.5s and fall back to old behaviour
                 DispatchQueue.main.async {
                     guard !self.isPaused else { return }
-                    print("[ScreenshotWatcher] Captured new screenshot: \(filename) (\(size) bytes)")
                     self.queueManager.addFiles([url])   // HEIC/TIFF screenshots convert off the main thread
                 }
             } else if attempt < 15 {

@@ -342,9 +342,9 @@ public struct DeckControlCenterView: View {
 
     private var statusSubtitle: String {
         if state.isTrackingPaused {
-            return "Paused"
+            return "Que is paused"
         } else if state.itemCount == 0 {
-            return "Collecting images"
+            return "Waiting for its first image"
         } else {
             return "\(state.itemCount) in Que"
         }
@@ -448,10 +448,10 @@ public struct DeckControlCenterView: View {
                 action: { state.toggleCallStyle() }
             )
             .help(state.usesDoubleTap
-                  ? "Tap ⌃ twice to call Que over. Click to hold ⌥ instead."
-                  : "Hold ⌥ to call Que over. Click to tap ⌃ twice instead.")
-            .accessibilityLabel(state.usesDoubleTap ? "Call Que over: tap Control twice" : "Call Que over: hold Option")
-            .accessibilityHint(state.usesDoubleTap ? "Switches to holding Option" : "Switches to tapping Control twice")
+                  ? "Tap the Control key (⌃) twice to call Que over. Click to hold the Option key (⌥) instead."
+                  : "Hold the Option key (⌥) to call Que over. Click to tap the Control key (⌃) twice instead.")
+            .accessibilityLabel(state.usesDoubleTap ? "Call Que over: tap the Control key twice" : "Call Que over: hold the Option key")
+            .accessibilityHint(state.usesDoubleTap ? "Switches to holding the Option key" : "Switches to tapping the Control key twice")
 
             actionButton(
                 id: "clear",
@@ -666,7 +666,7 @@ public struct DeckControlCenterView: View {
                 // scroll bar, which cut titles off ("Drop on Sli…"). OverlayScrollerStyle adds our thin bar instead.
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 2) {
-                        sectionHeader("Core Actions & Gestures")
+                        sectionHeader("Using Que")
                             .padding(.horizontal, 6)
                             .padding(.top, 8)
                             .padding(.bottom, 4)
@@ -676,7 +676,7 @@ public struct DeckControlCenterView: View {
                         dividerView
                             .padding(.vertical, 6)
 
-                        sectionHeader("Settings & Controls")
+                        sectionHeader("Settings")
                             .padding(.horizontal, 6)
                             .padding(.bottom, 4)
 
@@ -703,33 +703,33 @@ public struct DeckControlCenterView: View {
         GuideItem(id: "collect", symbol: "doc.on.doc", title: "Collect Images", badge: "⌘ C",
                   description: "Copy any image from a browser, Finder or a design app (right-click › Copy Image, or ⌘C). It joins Que."),
         GuideItem(id: "screenshots", symbol: "camera.viewfinder", title: "Screenshots", badge: "⌘ ⇧ 4",
-                  description: "Take a screenshot as usual and it goes straight into Que, not onto your desktop. Que hides while you pick an area."),
+                  description: "Take a screenshot as usual. It joins Que instead of landing on your desktop. Que hides while you choose the area."),
         GuideItem(id: "boards", symbol: "rectangle.stack", title: "Pinterest Boards", badge: "Link",
                   description: doubleTap
-                    ? "Copy a board link and Que offers it. Tap ⌃ twice, then click Que to choose pins, or click and hold to add them all (up to 100, skipping ones already in Que). Public boards only."
-                    : "Copy a board link and Que offers it. ⌥-click Que to choose pins, or ⌥-click and hold to add them all (up to 100, skipping ones already in Que). Public boards only."),
+                    ? "Copy a public Pinterest board link and Que offers to add it. Tap the Control key (⌃) twice, then click Que to pick pins, or click and hold to add them all (up to 100). Pins already in Que are skipped."
+                    : "Copy a public Pinterest board link and Que offers to add it. Hold the Option key (⌥) and click Que to pick pins, or click and hold to add them all (up to 100). Pins already in Que are skipped."),
         GuideItem(id: "videos", symbol: "film.stack", title: "Videos to GIF", badge: "Link",
-                  description: "Copy a Pinterest video pin's link, a link ending in .mp4 or .mov, or a video file in Finder, and Que turns it into a looping GIF (up to 4 seconds). To use another moment, hover the GIF in the preview and click the pencil. YouTube and similar sites aren't supported."),
+                  description: "Copy a Pinterest video pin, a link ending in .mp4 or .mov, or a video file in Finder. Que turns it into a short looping GIF. To pick a different moment, open the preview, point at the GIF and click the pencil. YouTube isn't supported."),
         GuideItem(id: "drop", symbol: "arrow.down.doc", title: "Drop on Slides", badge: doubleTap ? "⌃⌃ + Drag" : "⌥ + Drag",
                   description: doubleTap
-                    ? "Tap ⌃ twice so Que snaps under the pointer and a light runs around it, then drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go. Everything lands at once. Tap ⌃ twice again to send Que back without dropping."
-                    : "Hold ⌥ so Que snaps under the pointer, then drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go. Everything lands at once."),
+                    ? "Tap the Control key (⌃) twice and Que sticks to your pointer (its dot glows). Drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go: all your images land at once. To send Que back without dropping, tap the Control key twice again."
+                    : "Hold the Option key (⌥) and Que jumps under your pointer. Drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go: all your images land at once."),
         GuideItem(id: "grid", symbol: "square.grid.2x2", title: "Preview Grid", badge: doubleTap ? "⌃⌃ + Click" : "⌥ + Click",
-                  description: (doubleTap ? "Tap ⌃ twice, then click Que to see everything in it." : "⌥-click Que to see everything in it.")
-                    + " Click images to select them (⇧-click selects a range), then drag them out together or remove them with the trash button. Images you drag out stay in Que."),
+                  description: (doubleTap ? "Tap the Control key (⌃) twice, then click Que to see everything in it." : "Hold the Option key (⌥) and click Que to see everything in it.")
+                    + " Click images to select them (⇧-click selects a range), then drag them out or remove them with the trash button. Dragging copies them; they stay in Que."),
         GuideItem(id: "shake", symbol: QueSymbol.shake, title: "Shake to Clear", badge: "Shake",
-                  description: "Shake the pointer quickly from side to side to clear Que."),
+                  description: "Move the pointer quickly left and right a few times to clear Que."),
         GuideItem(id: "messages", symbol: "text.bubble", title: "Que Messages", badge: nil,
                   description: doubleTap
-                    ? "Que grows to tell you what's happening, like a board being added. When a message offers a choice, tap ⌃ twice, then click Que for the first option, or click and hold for the other."
-                    : "Que grows to tell you what's happening, like a board being added. When a message offers a choice, ⌥-click Que for the first option, or ⌥-click and hold for the other."),
+                    ? "Que grows to show what's happening, like a board being added. When a message offers two choices, tap the Control key (⌃) twice, then click Que for the first, or click and hold for the second."
+                    : "Que grows to show what's happening, like a board being added. When a message offers two choices, hold the Option key (⌥) and click Que for the first, or click and hold for the second."),
     ] }
 
     static func settingsGuide(doubleTap: Bool) -> [GuideItem] { [
         GuideItem(id: "switch", symbol: "power", title: "Pause Que", badge: nil,
-                  description: "The switch at the top pauses or resumes Que. While paused, the dot turns orange, copies and screenshots are ignored, and Que stays out of your way: it doesn't snap when you \(doubleTap ? "tap ⌃ twice" : "hold ⌥") or react to clicks or shakes, so you can work freely in apps like Illustrator."),
+                  description: "The switch at the top pauses Que. While paused, the dot turns orange, new copies and screenshots are skipped, and Que ignores clicks, shakes and \(doubleTap ? "Control key taps" : "the Option key"), so you can work freely in apps like Illustrator."),
         GuideItem(id: "filter", symbol: "line.3.horizontal.decrease", title: "Smart Filter", badge: nil,
-                  description: "Ignores shapes and text copied inside Figma, Photoshop and Illustrator, so only real images are collected."),
+                  description: "Skips shapes and text copied in Figma, Photoshop and Illustrator, so only real images join Que."),
         GuideItem(id: "screenshots-setting", symbol: "camera.viewfinder", title: "Screenshots", badge: nil,
                   description: "Turn off to keep screenshots out of Que."),
         GuideItem(id: "shake-setting", symbol: QueSymbol.shake, title: "Shake to Clear", badge: nil,
@@ -737,7 +737,7 @@ public struct DeckControlCenterView: View {
         GuideItem(id: "login", symbol: "power.circle", title: "Launch at Login", badge: nil,
                   description: "Starts Que in the menu bar when you log in."),
         GuideItem(id: "actions", symbol: "slider.horizontal.3", title: "Action Bar", badge: nil,
-                  description: "Copy All, Clear, and how you call Que over: hold ⌥, or tap ⌃ twice. Click that one to switch; this guide follows your choice."),
+                  description: "Copy All, Clear, and how Que comes to your pointer: hold the Option key (⌥), or tap the Control key (⌃) twice. Click it to switch; these tips follow your choice."),
         GuideItem(id: "menu", symbol: "menubar.rectangle", title: "Quick Menu", badge: "Right-click",
                   description: "Right-click the menu bar icon to copy, clear, pause, check for updates, report a problem or quit without opening this panel."),
         GuideItem(id: "privacy", symbol: "lock", title: "Privacy", badge: nil,

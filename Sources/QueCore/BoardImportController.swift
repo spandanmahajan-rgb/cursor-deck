@@ -170,6 +170,9 @@ public final class BoardPickerModel: ObservableObject {
 
 /// Downloads pins as deck-ready files: images as-is (format sniffed), video pins as looping GIFs.
 final class PinMediaFetcher {
+    /// Where videos download before becoming GIFs: Que's own session folder, so a crash mid-way leaves nothing
+    /// outside it (the launch purge cleans old sessions). Set on the main queue before each batch.
+    var downloadFolder = FileManager.default.temporaryDirectory
     private let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 20
@@ -212,6 +215,7 @@ final class PinMediaFetcher {
 
     private func fetchVideoAsGIF(_ url: URL, completion: @escaping (Result<(data: Data, ext: String), Failure>) -> Void) {
         var observation: NSKeyValueObservation?
+        let folder = downloadFolder
         let task = session.downloadTask(with: url) { tempURL, response, error in
             observation?.invalidate()
             if let limit = PinterestBoardResolver.rateLimit(in: response) {
@@ -224,7 +228,7 @@ final class PinMediaFetcher {
                 return
             }
             // The temp file disappears when this closure returns: move it first.
-            let local = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+            let local = folder.appendingPathComponent("download_\(UUID().uuidString).mp4")
             guard (try? FileManager.default.moveItem(at: tempURL, to: local)) != nil else {
                 DispatchQueue.main.async { completion(.failure(.failed)) }
                 return
@@ -448,16 +452,18 @@ public final class BoardImportController {
     /// Downloads `pins` into the deck, in board order, with progress in the pill.
     private func add(_ pins: [PinterestBoardPin], from board: PinterestBoard, alreadyInDeck: Int) {
         guard !pins.isEmpty else { return }
+        guard !queueManager.isFull else { hudPanel.show(.queFull()); return }
         importToken &+= 1
         let token = importToken
         let clearsAtStart = queueManager.clearCount   // Que emptied meanwhile → the rest is dropped
         var added = 0, processed = 0
         hudPanel.show(.boardAdding(count: pins.count, name: board.name))
 
+        fetcher.downloadFolder = queueManager.sessionDirectory
         fetcher.fetchInOrder(pins, onItem: { [weak self] index, file in
             guard let self = self else { return }
             processed += 1
-            if let file = file, self.queueManager.clearCount == clearsAtStart,
+            if let file = file, self.queueManager.clearCount == clearsAtStart, !self.queueManager.isFull,
                let item = self.queueManager.add(imageData: file.data, extension: file.ext) {
                 added += 1
                 self.pinsInDeckByBoard[board.id, default: [:]][pins[index].id] = item.id
@@ -473,6 +479,8 @@ public final class BoardImportController {
             }
             if let retry = rateLimit {
                 self.hudPanel.show(.pinterestRateLimited(retryAfter: retry, partial: (added, pins.count, "Added")))
+            } else if added < pins.count && self.queueManager.isFull {
+                self.hudPanel.show(.queFull())   // filled up part-way; the rest wasn't lost, there was no room
             } else if added == 0 {
                 self.hudPanel.show(.nothingDownloaded())
             } else {

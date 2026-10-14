@@ -203,7 +203,7 @@ public final class MenuBarManager: NSObject {
         let isPaused = clipboardWatcher?.isPaused ?? false
         button.image = hasUpdate ? QueLogoAsset.menuBarImageWithoutDot : QueLogoAsset.menuBarImage
         if let version = UpdateManager.shared.availableVersion {
-            button.toolTip = "Que: version \(version) is available"
+            button.toolTip = "Que \(version) is available"
             button.setAccessibilityValue("Update available")
         } else {
             button.toolTip = "Que"

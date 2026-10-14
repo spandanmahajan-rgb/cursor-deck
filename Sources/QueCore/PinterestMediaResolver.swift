@@ -106,7 +106,6 @@ public final class PinterestMediaResolver {
                     return
                 }
                 guard let self = self, let finalURL = response?.url?.absoluteString else {
-                    print("[Pinterest] pin.it redirect failed: \(error?.localizedDescription ?? "no response")")
                     done(nil)
                     return
                 }
@@ -126,7 +125,6 @@ public final class PinterestMediaResolver {
 
     private func extractFromCanonicalPinURL(_ urlString: String, completion: @escaping (PinterestMediaResult?) -> Void) {
         guard let pinId = extractPinId(from: urlString) else {
-            print("[Pinterest] no pin id in \(urlString)")
             completion(nil)
             return
         }
@@ -163,7 +161,6 @@ public final class PinterestMediaResolver {
                 return
             }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                print("[Pinterest] PinResource HTTP \(http.statusCode) for pin \(pinId)")
                 completion(nil)
                 return
             }
@@ -171,7 +168,6 @@ public final class PinterestMediaResolver {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let resourceResponse = json["resource_response"] as? [String: Any],
                   let pinData = resourceResponse["data"] as? [String: Any] else {
-                print("[Pinterest] PinResource unreadable for pin \(pinId): \(error?.localizedDescription ?? "unexpected JSON")")
                 completion(nil)
                 return
             }
@@ -451,7 +447,6 @@ public final class PinterestMediaResolver {
                 return
             }
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                print("[Pinterest] pin page HTTP \(http.statusCode) for pin \(pinId)")
                 completion(nil)
                 return
             }

@@ -561,6 +561,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
         previewPanel.open(from: pillRect, queueManager: queueManager) { [weak self] in
             guard let self = self else { return }
+            self.isTapSnapped = false   // the preview did its job: ⌃⌃ mode lets go, like after a drop
             self.alphaValue = 1.0
             self.updatePosition()
         }

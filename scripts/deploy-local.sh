@@ -251,8 +251,8 @@ echo "$title"
 for tool in swift lipo codesign plutil ditto xattr osascript defaults open ps cmp; do
   command -v "$tool" >/dev/null || abort "Missing tool: $tool"
 done
-[ -d "$SRC_APP/Contents/MacOS" ] || abort "$SRC_APP/Contents/MacOS not found."
-[ "$(bundle_id "$SRC_APP")" = "$BUNDLE_ID" ] || abort "./Que.app has bundle ID '$(bundle_id "$SRC_APP")', not $BUNDLE_ID."
+[ "$(plutil -extract CFBundleIdentifier raw -o - "$ROOT/packaging/Info.plist" 2>/dev/null)" = "$BUNDLE_ID" ] \
+  || abort "packaging/Info.plist doesn't have bundle ID $BUNDLE_ID."
 [ -d "$DEST_APP" ] || abort "$DEST_APP not found. Install Que from the DMG first."
 [ "$(bundle_id "$DEST_APP")" = "$BUNDLE_ID" ] || abort "$DEST_APP has bundle ID '$(bundle_id "$DEST_APP")', not Que's. Not touching it."
 [ ! -e "$STAGED_APP" ] || abort "$STAGED_APP already exists (from an earlier run?). Look at it and move it away yourself."
@@ -273,6 +273,7 @@ else
   run build-x86_64 "Build x86_64" swift build -c release --triple x86_64-apple-macosx; warn_count
 fi
 run check-builds "Check both builds"         verify_builds
+run skeleton     "Prepare ./Que.app"         "$ROOT/scripts/make-app.sh"
 run combine      "Combine universal binary"  lipo -create -output "$SRC_APP/Contents/MacOS/Que" "$ARM_BIN" "$X86_BIN"
 run sign         "Sign (ad-hoc)"             codesign --force --deep -s - "$SRC_APP"
 run verify-build "Verify ./Que.app"          verify_app "$SRC_APP"

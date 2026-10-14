@@ -18,6 +18,10 @@ let package = Package(
         .executable(
             name: "que-tests",
             targets: ["QueTests"]
+        ),
+        .executable(
+            name: "que-sign",
+            targets: ["QueSign"]
         )
     ],
     dependencies: [],
@@ -32,6 +36,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "QueTests",
+            dependencies: ["QueCore"]
+        ),
+        .executableTarget(
+            name: "QueSign",
             dependencies: ["QueCore"]
         )
     ]

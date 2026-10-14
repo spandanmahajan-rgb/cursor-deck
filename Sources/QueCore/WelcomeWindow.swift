@@ -71,7 +71,8 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.title = "Welcome to Que"
-        window.isMovableByWindowBackground = true
+        // Not movable by the background: the drag practice moved the whole window instead of the badge. The title bar still moves it.
+        window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
@@ -201,7 +202,7 @@ struct WelcomeView: View {
                     .multilineTextAlignment(.center)
                     .padding(.top, 36)
 
-                Text("Copy images. Drop them all at once.")
+                Text("Copy it. Que it. Drop it.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .padding(.top, 6)
@@ -288,39 +289,39 @@ struct WelcomeView: View {
         switch p {
         case .copy: return "Copy what catches your eye"
         case .choose: return "How should Que come to you?"
-        case .callOver: return usesDoubleTap ? "Tap the Control key twice" : "Hold the Option key"
-        case .drag: return "Drag, then let go"
-        case .closerLook: return usesDoubleTap ? "Click for a closer look" : "Option-click for a closer look"
-        case .shake: return "Shake to start fresh"
-        case .menuBar: return "Que lives up here"
+        case .callOver: return "Bring Que to your pointer"
+        case .drag: return "Drag Que onto a slide"
+        case .closerLook: return "Click Que to see inside"
+        case .shake: return "Shake to clear Que"
+        case .menuBar: return "Find Que in your menu bar"
         }
     }
 
     private func instruction(_ p: TourPage) -> String {
         switch p {
-        case .copy: return "Every image you copy joins Que, the little badge that follows your pointer."
+        case .copy: return "Every image you copy joins Que, the small badge next to your pointer."
         case .choose: return ""
-        case .callOver: return usesDoubleTap ? "Try it: tap the Control key (⌃) twice, quickly. Que moves under your pointer."
-                                             : "Try it: hold the Option key (⌥). Que moves under your pointer."
-        case .drag: return usesDoubleTap ? "Try it: tap the Control key twice, then drag Que onto the slide."
-                                         : "Try it: hold the Option key and drag Que onto the slide."
+        case .callOver: return usesDoubleTap ? "Try it: tap the Control key (⌃) twice, quickly. Que jumps under your pointer."
+                                             : "Try it: hold the Option key (⌥). Que jumps under your pointer."
+        case .drag: return usesDoubleTap ? "Try it: tap the Control key twice, then drag Que onto the slide on the right."
+                                         : "Try it: hold the Option key and drag Que onto the slide on the right."
         case .closerLook: return usesDoubleTap ? "Try it: tap the Control key twice, then click Que."
                                                : "Try it: hold the Option key and click Que."
-        case .shake: return "Try it: shake the pointer quickly from side to side."
-        case .menuBar: return "Click the Que icon in your menu bar for switches, tips and everything else."
+        case .shake: return "Try it: move the pointer quickly left and right a few times."
+        case .menuBar: return "Click the Que icon at the top of your screen to pause Que, change settings or see tips."
         }
     }
 
     private func success(_ p: TourPage) -> String {
         switch p {
-        case .callOver: return usesDoubleTap ? "That's it. Tap the Control key twice again to send it back." : "That's it. Let go and it moves aside."
-        case .drag: return "Everything landed at once."
-        case .closerLook: return "Pick a few, drag them out, or clear some out."
+        case .callOver: return usesDoubleTap ? "Nice. Tap the Control key twice to send it back." : "Nice. Let go and Que steps aside."
+        case .drag: return "All 3 images landed at once."
+        case .closerLook: return "Pick images here to drag or remove."
         default: return "Que is empty again."
         }
     }
 
-    private var keyHint: String { usesDoubleTap ? "Tap the Control key twice first." : "Hold the Option key while you do it." }
+    private var keyHint: String { usesDoubleTap ? "First tap the Control key twice." : "Keep holding the Option key as you try." }
 
     /// One line under the instruction: a check once the move worked, a nudge if the key was missing. Fixed height,
     /// so nothing jumps when it changes.
@@ -337,6 +338,8 @@ struct WelcomeView: View {
             }
         }
         .font(.callout.weight(.medium))
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
         .frame(height: 20)
         .padding(.horizontal, 32)
         .animation(.easeOut(duration: 0.15), value: practiced)
@@ -369,14 +372,14 @@ struct WelcomeView: View {
 
             VStack(spacing: 10) {
                 choiceCard(doubleTap: false, keys: "⌥", title: "Hold the Option key",
-                           line: "A smooth way to use Que, though it can sit over the app you're in.")
+                           line: "Que comes to your pointer while you hold the key.")
                 choiceCard(doubleTap: true, keys: "⌃⌃", title: "Tap the Control key twice",
-                           line: "Que stays away from the apps underneath.")
+                           line: "Que comes and stays until you tap twice again. Handy if you use the Option key in Figma or Slides.")
             }
             .padding(.top, 20)
             .padding(.horizontal, 28)
 
-            Text("You can switch anytime in the menu bar.")
+            Text("You can change this later from the menu bar.")
                 .font(.footnote)
                 .foregroundColor(.secondary)
                 .padding(.top, 14)

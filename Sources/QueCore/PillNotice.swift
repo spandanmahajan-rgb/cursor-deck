@@ -133,7 +133,7 @@ public extension PillNotice {
         let pins = { (n: Int) in n == 1 ? "1 pin" : "\(n) pins" }
         if added < requested {
             return PillNotice("\(added) of \(requested) pins from “\(name)” joined Que",
-                              detail: "\(requested - added) couldn't be downloaded.", tone: .warning, duration: 4)
+                              detail: "\(requested - added) couldn't join Que.", tone: .warning, duration: 4)
         }
         if alreadyInDeck > 0 {
             return PillNotice("\(added) new \(added == 1 ? "pin" : "pins") from “\(name)” joined Que",
@@ -157,7 +157,7 @@ public extension PillNotice {
     }
 
     static func nothingDownloaded() -> PillNotice {
-        PillNotice("None of the pins could be downloaded", detail: "Try again in a moment.", tone: .error, duration: 5)
+        PillNotice("These pins couldn't join Que", detail: "Try again in a moment.", tone: .error, duration: 5)
     }
 
     // Things on their way into Que use queue verbs (joining, saving a spot, up next) but never a second noun like
@@ -182,6 +182,11 @@ public extension PillNotice {
     static func gifFailed() -> PillNotice {
         PillNotice("This video couldn't join Que", detail: "Try another link, or an MP4 or MOV version.",
                    tone: .error, duration: 5)
+    }
+
+    /// At `DeckQueueManager.capacity`: new images are turned away until the user clears Que.
+    static func queFull() -> PillNotice {
+        PillNotice("Que is full", detail: "Clear Que to add more.", tone: .warning, duration: 4)
     }
 
     static func pinFailed() -> PillNotice {

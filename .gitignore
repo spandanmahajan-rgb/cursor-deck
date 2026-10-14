@@ -19,6 +19,7 @@ DerivedData/
 CursorDeck.zip
 CursorDeck.app/
 Que.zip
+Que.zip.sig
 Que.app/
 .zip_staging/
 .dmg_staging/
@@ -39,3 +40,6 @@ CURSOR_DECK_AUDIT_PROMPT.md
 
 # Brand source files (private, not published)
 Logo/
+
+# Claude Code notes and settings (private)
+.claude/

@@ -20,10 +20,12 @@ echo "Running tests..."
 swift build
 QUE_LIVE_TESTS=1 .build/debug/que-tests   # includes the live Pinterest checks
 
-# 1. Update version in UpdateManager.swift & Info.plist
+# 1. Update the version in UpdateManager.swift, then build the Que.app skeleton from packaging/ with it.
+#    (No "|| true": a version that silently stays old makes every user see this update again and again.)
 sed -i '' "s/public static let currentVersion = \".*\"/public static let currentVersion = \"$VERSION\"/" Sources/QueCore/UpdateManager.swift
-plutil -replace CFBundleShortVersionString -string "$VERSION" Que.app/Contents/Info.plist 2>/dev/null || true
-plutil -replace CFBundleVersion -string "$VERSION" Que.app/Contents/Info.plist 2>/dev/null || true
+grep -q "public static let currentVersion = \"$VERSION\"" Sources/QueCore/UpdateManager.swift \
+  || { echo "Couldn't set currentVersion to $VERSION in UpdateManager.swift"; exit 1; }
+./scripts/make-app.sh
 
 # 2. Build Universal Release Binary
 echo "Building universal release binary..."
@@ -31,7 +33,6 @@ swift build -c release --triple arm64-apple-macosx
 swift build -c release --triple x86_64-apple-macosx
 
 # 3. Create app bundle & codesign
-mkdir -p Que.app/Contents/MacOS
 lipo -create -output Que.app/Contents/MacOS/Que \
   .build/arm64-apple-macosx/release/Que \
   .build/x86_64-apple-macosx/release/Que
@@ -42,6 +43,16 @@ codesign --force --deep -s - Que.app
 echo "Creating Que.zip..."
 rm -f Que.zip
 ditto -c -k --sequesterRsrc --keepParent Que.app Que.zip
+ZIPPED_VERSION="$(unzip -p Que.zip Que.app/Contents/Info.plist | plutil -extract CFBundleShortVersionString raw -o - -)"
+[ "$ZIPPED_VERSION" = "$VERSION" ] || { echo "Que.zip says version '$ZIPPED_VERSION', expected $VERSION. Stopping."; exit 1; }
+
+# Seal Que.zip (see UpdateSignature.swift): apps from 2.9.0 on install only a zip whose Que.zip.sig matches.
+# The private key stays in the Keychain item "Que release signing key"; it's handed to que-sign for this one call only.
+rm -f Que.zip.sig
+QUE_SIGNING_KEY="$(security find-generic-password -s "Que release signing key" -a que -w)" \
+  .build/debug/que-sign sign Que.zip > Que.zip.sig \
+  || { echo "Couldn't sign Que.zip (is the Keychain item \"Que release signing key\" there?). Stopping."; exit 1; }
+.build/debug/que-sign verify Que.zip Que.zip.sig
 
 # 5. Build DMG (Standard Drag-and-Drop Disk Image — No Admin Password Required)
 echo "Building DMG..."
@@ -54,7 +65,8 @@ hdiutil create -volname "Que" -srcfolder .dmg_staging -ov -format UDZO Que.dmg
 rm -rf .dmg_staging
 
 # 6. Commit version bump
-git add .
+# Only the published files: private notes (CLAUDE.md, .claude/) must never ride along, even from a fresh clone.
+git add Sources Package.swift README.md QUE_MASTER_DOC.md LICENSE AppIcon.icns .gitignore scripts packaging
 git commit -m "Release v$VERSION" -m "$NOTES" || true   # notes are "- " bullet lines, so they go in the body
 # Stop here if the push fails: publishing a release on top of an un-pushed commit would tag old code.
 git push origin main
@@ -64,6 +76,7 @@ echo "Publishing GitHub Release v$VERSION..."
 gh release create "v$VERSION" \
   Que.dmg \
   Que.zip \
+  Que.zip.sig \
   --title "Que v$VERSION" \
   --notes "$NOTES" \
   --latest

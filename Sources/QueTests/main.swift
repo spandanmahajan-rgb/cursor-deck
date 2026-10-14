@@ -7,6 +7,7 @@ import AppKit
 import ImageIO
 import AVFoundation
 import QueCore
+import CryptoKit
 
 /// Tests that contact Pinterest run only with QUE_LIVE_TESTS=1 (release.sh sets it): every run counts against
 /// Pinterest's request limit, and repeated dev runs hit it.
@@ -821,6 +822,71 @@ func testVersionCompare() {
     print("✅ testVersionCompare passed!")
 }
 
+/// The updater only installs Que.zip from this repo's GitHub releases; anything else opens the release page instead.
+func testUpdaterTrustsOnlyThisRepo() {
+    print("Running testUpdaterTrustsOnlyThisRepo...")
+    let base = "https://github.com/spandanmahajan-rgb/que/releases/download/v9.9.9/"
+    func release(_ assets: [(String, String)]) -> [String: Any] {
+        ["assets": assets.map { ["name": $0.0, "browser_download_url": $0.1] }]
+    }
+    assert(UpdateManager.zipAssetURL(in: release([("Que.dmg", base + "Que.dmg"), ("Que.zip", base + "Que.zip")]))?
+        .lastPathComponent == "Que.zip", "Picks the zip, not the DMG")
+    assert(UpdateManager.zipAssetURL(in: release([("Que.zip", "https://github.com/someone/else/releases/download/v1/Que.zip")])) == nil,
+           "Another repo's release is refused")
+    assert(UpdateManager.zipAssetURL(in: release([("Que.zip", "http://github.com/spandanmahajan-rgb/que/releases/download/v1/Que.zip")])) == nil,
+           "Plain http is refused")
+    assert(UpdateManager.zipAssetURL(in: release([("Que.zip", "https://evil.example/spandanmahajan-rgb/que/releases/download/v1/Que.zip")])) == nil,
+           "Another host is refused")
+    assert(UpdateManager.zipAssetURL(in: release([("Que.pkg", base + "Que.pkg")])) == nil, "No installer packages")
+    assert(UpdateManager.zipAssetURL(in: [:]) == nil, "No assets, no install")
+    assert(UpdateManager.isTrustedFinalHost("objects.githubusercontent.com"))
+    assert(UpdateManager.isTrustedFinalHost("github.com"))
+    assert(!UpdateManager.isTrustedFinalHost("githubusercontent.com.evil.example"))
+    assert(!UpdateManager.isTrustedFinalHost(nil))
+    print("✅ testUpdaterTrustsOnlyThisRepo passed!")
+}
+
+/// At its limit Que turns new images away (never deletes any) and says so once per attempt.
+func testQueStopsAtItsLimit() {
+    print("Running testQueStopsAtItsLimit...")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("que-full-\(UUID().uuidString)")
+    let qm = DeckQueueManager(sessionBaseDirectory: dir)
+    qm.capacity = 3
+    var fullNotices = 0
+    qm.onFull = { fullNotices += 1 }
+    for _ in 0..<3 { assert(qm.add(imageData: createMockPNGData()) != nil) }
+    assert(qm.isFull && fullNotices == 0, "Exactly at the limit: full, nothing said yet")
+    assert(qm.add(imageData: createMockPNGData()) == nil, "A 4th image is turned away")
+    assert(qm.count == 3 && fullNotices == 1, "Nothing deleted, one notice")
+    // Files from Finder: only what fits joins, the extra copies are cleaned up.
+    qm.remove(id: qm.items[0].id)
+    let src = dir.appendingPathComponent("src.png")
+    try? createMockPNGData().write(to: src)
+    var added: [DeckItem]?
+    qm.addFiles([src, src, src]) { added = $0 }
+    waitFor(5) { added != nil }
+    assert(added?.count == 1 && qm.count == 3 && fullNotices == 2, "One of three fits; the rest is reported")
+    let files = (try? FileManager.default.contentsOfDirectory(at: qm.sessionDirectory, includingPropertiesForKeys: nil)) ?? []
+    assert(files.count == 3, "Turned-away copies don't linger on disk")
+    try? FileManager.default.removeItem(at: dir)
+    print("✅ testQueStopsAtItsLimit passed!")
+}
+
+/// Only a zip sealed with the release key installs: a changed file, another key or no seal is refused.
+func testUpdateSeal() {
+    print("Running testUpdateSeal...")
+    let testKey = Curve25519.Signing.PrivateKey()
+    let priv = testKey.rawRepresentation.base64EncodedString(), pub = testKey.publicKey.rawRepresentation.base64EncodedString()
+    let zip = Data("pretend this is Que.zip".utf8)
+    let seal = try! UpdateSignature.sign(zip, privateKeyBase64: priv)
+    assert(UpdateSignature.isValid(zip, signatureBase64: seal + "\n", publicKeyBase64: pub), "Sealed zip passes (a trailing newline is fine)")
+    assert(!UpdateSignature.isValid(zip + Data([0]), signatureBase64: seal, publicKeyBase64: pub), "A changed zip fails")
+    assert(!UpdateSignature.isValid(zip, signatureBase64: seal), "Sealed with another key: fails against Que's key")
+    assert(!UpdateSignature.isValid(zip, signatureBase64: "", publicKeyBase64: pub), "No seal fails")
+    assert(Data(base64Encoded: UpdateSignature.publicKey)?.count == 32, "Que's public key is a real Ed25519 key")
+    print("✅ testUpdateSeal passed!")
+}
+
 func testReleaseNotesAsBullets() {
     print("Running testReleaseNotesAsBullets...")
     let bullets = UpdateManager.releaseNoteItems("- Hold ⌥ to call Que over.\n* **Faster** drops\n\n• Shake icon on older macOS")
@@ -1305,6 +1371,9 @@ testQueueAddAndClear()
 testSymbolsExistOnMacOS13()
 testClearCountBumps()
 testVersionCompare()
+testUpdaterTrustsOnlyThisRepo()
+testQueStopsAtItsLimit()
+testUpdateSeal()
 testReleaseNotesAsBullets()
 testProblemReport()
 testConcealedClipboardIsSkipped()

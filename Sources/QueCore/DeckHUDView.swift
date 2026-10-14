@@ -173,7 +173,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         setAccessibilityRole(.button)
         setAccessibilityLabel("Que")
         setAccessibilityValue("0 items")
-        setAccessibilityHelp("Press to copy everything in Que for pasting. Option-click to preview it.")
+        setAccessibilityHelp("Press to copy everything in Que. \(QueControls.usesDoubleTap ? "Tap the Control key twice, then click" : "Hold the Option key and click") to see what's inside.")
         for subview in [dotView, countLabel, noticeClipView, noticeStack, noticeMessageLabel, noticeDetailLabel] {
             subview.setAccessibilityElement(false)
         }
@@ -706,16 +706,9 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     public func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         isDraggingSessionActive = false
         isPressed = false
-        let isAccepted = operation != []
-        let logMsg = "[Que] Drag ended at \(screenPoint), operation raw=\(operation.rawValue), accepted=\(isAccepted)\n"
-        print(logMsg)
-        appendDragLog(logMsg)
-
-        if isAccepted {
-            print("[Que] Drop ACCEPTED ✓ operation=\(operation.rawValue)")
+        if operation != [] {
             delegate?.deckHUDViewDidCompleteDrop(self)
         } else {
-            print("[Que] Drop not accepted natively (raw=\(operation.rawValue))")
             delegate?.deckHUDViewDidCancelDrop(self)
         }
     }
@@ -737,23 +730,5 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         }
     }
 
-    private func appendDragLog(_ message: String) {
-        // AUDIT: was /private/tmp/cursor-deck.log (readable by other accounts); keep it in the per-user temp dir.
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("que.log").path
-        guard let data = message.data(using: .utf8) else { return }
-        // AUDIT: this debug log grew without bound; keep it under ~200 KB.
-        if let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int), size > 200_000 {
-            try? FileManager.default.removeItem(atPath: path)
-        }
-        if FileManager.default.fileExists(atPath: path) {
-            if let handle = FileHandle(forWritingAtPath: path) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
-        }
-    }
 }
 

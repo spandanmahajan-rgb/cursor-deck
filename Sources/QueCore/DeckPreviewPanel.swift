@@ -243,7 +243,7 @@ public final class DeckPreviewPanel: NSPanel {
         let selected = selectedIDs.count
         subtitleLabel.stringValue = selected > 0
             ? "\(selected) of \(total) selected"
-            : (total == 1 ? "1 item" : "\(total) items")
+            : "\(total) in Que"
         selectButton.title = (selected == total && total > 0) ? "Select None" : "Select All"
         selectButton.sizeToFit()
         removeButton.isHidden = selected == 0
@@ -706,7 +706,7 @@ final class PreviewThumbnailCell: NSView, NSDraggingSource {
         setAccessibilityRole(.button)
         setAccessibilityLabel("Image \(position) of \(total)")
         setAccessibilityHelp("Selects this image. Drag to drop it, or the whole selection; images stay in Que.")
-        toolTip = "Click to select. Drag to drop (images stay in Que)."
+        toolTip = "Click to select. Drag to drop a copy; it stays in Que."
 
         if item.fileURL.pathExtension.lowercased() == "gif" {
             let tag = Self.badgeLabel("GIF")

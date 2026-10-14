@@ -52,7 +52,8 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Scroll passes through** | Scroll while Que is under the pointer | Scrolling (e.g. ⌥ + scroll to zoom in Illustrator, Figma, Maps) goes to the app underneath: Que becomes click-through until the wheel is quiet for 0.35 s. The first tick is lost. |
 | **Report a Problem** | Control Center or right-click menu | Opens a short Google Form in the browser with Que's version, macOS, the Mac's chip and Que's last few messages already filled in (board names and links removed; never clipboard contents or images). The user adds what happened and an optional email. Que sends nothing itself. |
 | **Welcome Tour** | After installing from Que.dmg | A welcome window where the "que" logo forms itself (a dot falls in from above the window, lands in a "u" and its weight tumbles it into the q), then "Welcome to Que, you Quetie!", and a tour: copy, "How should Que come to you?" (hold the Option key, or tap the Control key twice), then practice pages that react to the real keys and pointer (call Que over, drag onto a slide, closer look, shake), ending with "Open Que", which opens the menu bar panel. Shown whenever a fresh copy is installed by hand (new or returning users), and once after the first update that has the choice (v2.8.0); never after other updates or on normal launches. Opens on the screen with the pointer. |
-| **In-App Auto Updater** | "Check for Updates..." | Background checks against GitHub Releases (at launch, hourly while running, and when the menu opens). The update window lists what's new as short bullets. A new version turns the small circle of the menu bar icon blue, and "Check for Updates…" becomes "Update to Que x…" in the Control Center and right-click menu; nothing pops up on its own. Installs with a passwordless in-place app replacement. |
+| **In-App Auto Updater** | "Check for Updates..." | Background checks against GitHub Releases (at launch, hourly while running, and when the menu opens). The update window lists what's new as short bullets. A new version turns the small circle of the menu bar icon blue, and "Check for Updates…" becomes "Update to Que x…" in the Control Center and right-click menu; nothing pops up on its own. Installs with a passwordless in-place app replacement, only from this repo's releases and only when `Que.zip` carries a valid seal (`Que.zip.sig`, an Ed25519 signature made by `release.sh` with a key kept in the owner's Keychain; since v2.9.0). A copy running outside Applications opens the release page instead. |
+| **Room in Que** | Automatic | Que holds up to 200 images. At the limit new copies are turned away (nothing is deleted) and Que says "Que is full / Clear Que to add more." |
 
 ---
 
@@ -202,21 +203,21 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 ```
 
 ### What `scripts/release.sh` Executes:
-1. **Version Sync**: Updates `UpdateManager.currentVersion` and `Que.app/Contents/Info.plist`.
+1. **Version Sync**: Updates `UpdateManager.currentVersion`, then `scripts/make-app.sh` builds the `Que.app` skeleton from the tracked `packaging/Info.plist` and `AppIcon.icns` with that version (stops if it can't).
 2. **Universal Compilation**:
    - `swift build -c release --triple arm64-apple-macosx` (Apple Silicon)
    - `swift build -c release --triple x86_64-apple-macosx` (Intel)
    - Stitches binaries with `lipo -create`.
 3. **Codesigning**: Ad-hoc deep codesign with `codesign --force --deep -s - Que.app`.
-4. **Auto-Updater Zip**: Packages `Que.zip` via `ditto -c -k --sequesterRsrc --keepParent`.
+4. **Auto-Updater Zip**: Packages `Que.zip` via `ditto -c -k --sequesterRsrc --keepParent`, then reads the version back out of the zip and stops if it doesn't match.
 5. **DMG Disk Image**: Stitches standard drag-and-drop installer `Que.dmg` with `/Applications` symlink via `hdiutil`.
-6. **Git Release**: Commits changes to `main`, pushes to GitHub, and invokes `gh release create v<VERSION>` uploading both `.dmg` and `.zip`.
+6. **Git Release**: Commits only the published paths (Sources, scripts, packaging, docs; never private notes) to `main`, pushes to GitHub, and invokes `gh release create v<VERSION>` uploading both `.dmg` and `.zip`.
 
 ---
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.8.1**
+* **Current Released Version**: **v2.9.0**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 
