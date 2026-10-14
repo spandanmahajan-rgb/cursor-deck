@@ -18,7 +18,7 @@ echo "========================================"
 # 0. Tests must pass before anything is built or published (asserts only run in debug builds)
 echo "Running tests..."
 swift build
-.build/debug/que-tests
+QUE_LIVE_TESTS=1 .build/debug/que-tests   # includes the live Pinterest checks
 
 # 1. Update version in UpdateManager.swift & Info.plist
 sed -i '' "s/public static let currentVersion = \".*\"/public static let currentVersion = \"$VERSION\"/" Sources/QueCore/UpdateManager.swift

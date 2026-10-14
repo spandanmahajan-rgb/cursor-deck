@@ -289,10 +289,10 @@ final class PinMediaFetcher {
 // MARK: - Controller
 
 /// Pinterest board import: a copied board link becomes an *offer* in the pill (nothing is added yet).
-/// ⌥-click opens the picker to choose; ⌥⇧-click adds the board's pins to the deck (only the ones not already there).
+/// ⌥-click opens the picker to choose; ⌥-click and hold adds the board's pins to the deck (only the ones not already there).
 /// Files only ever go into the deck: never Finder.
 public final class BoardImportController {
-    /// Pins loaded at first and added by "⌥⇧-click adds all".
+    /// Pins loaded at first and added by "⌥-click and hold adds all".
     public static let pinCap = 100
 
     private let queueManager: DeckQueueManager
@@ -306,6 +306,10 @@ public final class BoardImportController {
     /// Board id → (pin id → deck item id) for pins currently in the deck. Kept in sync with the deck, so clearing,
     /// dropping or deleting items makes those pins addable again.
     private var pinsInDeckByBoard: [String: [String: UUID]] = [:]
+    /// Boards looked up recently ("username/slug" → the board with the pins loaded so far). Copying the same link
+    /// again within `boardMemory` reuses it instead of asking Pinterest again.
+    private var recentBoards: [String: (model: BoardPickerModel, at: Date)] = [:]
+    static let boardMemory: TimeInterval = 30 * 60
 
     public init(queueManager: DeckQueueManager, hudPanel: CursorHUDPanel,
                 makeResolver: @escaping () -> PinterestBoardResolver = { PinterestBoardResolver() }) {
@@ -329,6 +333,12 @@ public final class BoardImportController {
 
     /// Entry point when a board link is copied.
     public func handleBoardLink(username: String, slug: String) {
+        let key = "\(username)/\(slug)".lowercased()
+        recentBoards = recentBoards.filter { Date().timeIntervalSince($0.value.at) < Self.boardMemory }
+        if let recent = recentBoards[key] {
+            offer(recent.model)
+            return
+        }
         // A fresh Pinterest session per board link (see PinterestBoardResolver.init for why).
         let resolver = makeResolver()
         resolver.fetchBoard(username: username, slug: slug) { [weak self] result in
@@ -338,18 +348,20 @@ public final class BoardImportController {
                 case .failure(let error):
                     self.hudPanel.show(Self.notice(for: error))
                 case .success(let board):
-                    self.offer(board, resolver: resolver)
+                    let model = BoardPickerModel(board: board, resolver: resolver)
+                    self.recentBoards[key] = (model, Date())
+                    self.offer(model)
                 }
             }
         }
     }
 
-    private func offer(_ board: PinterestBoard, resolver: PinterestBoardResolver) {
+    private func offer(_ model: BoardPickerModel) {
+        let board = model.board
         guard board.pinCount > 0 else {
             hudPanel.show(.boardEmpty(name: board.name))
             return
         }
-        let model = BoardPickerModel(board: board, resolver: resolver)
         model.onLoadError = { [weak self] error in self?.hudPanel.show(Self.notice(for: error)) }
         model.setPinsInDeck(pinsInDeck(board))
         currentModel = model
@@ -364,21 +376,31 @@ public final class BoardImportController {
                 guard let self = self, let model = model else { return }
                 // Turn the offer straight into progress (no collapse in between while the pins load).
                 self.hudPanel.show(.boardPreparing(name: board.name))
-                model.loadNextBatch { [weak self] in self?.addMissing(from: model) }
+                self.loadFirstBatch(of: model) { [weak self] in self?.addMissing(from: model) }
             },
             choose: choose
         )
 
         // Decide instantly from what we already know (no network wait): if the deck already holds as many of this
-        // board's pins as "⌥⇧-click adds all" would add, it's already added. Pinterest's count includes a few
+        // board's pins as "⌥-click and hold adds all" would add, it's already added. Pinterest's count includes a few
         // hidden pins (48 reported, 45 served), hence the small margin. The first pins prefetch meanwhile.
-        model.loadNextBatch()
+        loadFirstBatch(of: model)
         let alreadyIn = pinsInDeck(board).count
         let fullAdd = min(board.pinCount, Self.pinCap)
         if alreadyIn > 0 && alreadyIn >= fullAdd - min(5, fullAdd / 10) {
             hudPanel.show(.boardAlreadyAdded(name: board.name, choose: choose))
         } else {
             hudPanel.show(offerNotice)
+        }
+    }
+
+    /// Loads the board's first `pinCap` pins unless they're already loaded (a remembered board): loading another
+    /// batch would ask Pinterest for pins nobody asked for.
+    private func loadFirstBatch(of model: BoardPickerModel, then done: (() -> Void)? = nil) {
+        if model.pins.count >= Self.pinCap || !model.hasMore {
+            done?()
+        } else {
+            model.loadNextBatch(completion: done)
         }
     }
 

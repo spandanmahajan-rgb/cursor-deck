@@ -64,16 +64,17 @@ public struct GIFSegment: Equatable {
     public static func lengthLabel(_ seconds: Double) -> String { String(format: "%.1f s", seconds) }
 }
 
-/// What a press on the filmstrip grabs. Handles win over everything (the nearer one when a short part puts them
-/// together), then the playhead line, then the chosen part's body; anywhere else seeks.
+/// What a press on the filmstrip grabs, in this order: the edge handles (the nearer one when a short part puts them
+/// together), then the playhead dot, then the chosen part's body; anywhere else seeks. The dot comes before the body
+/// only inside its own small circle: it usually sits inside the part and could never be grabbed otherwise.
 public enum GIFTimelineTarget: Equatable {
     case startHandle, endHandle, playhead, range, seek
 
     /// Handles are drawn `handleWidth` wide outside the part; their hit areas reach 4 pt further each way, so they're
-    /// easy to catch without looking bigger. The playhead catches ±4 pt.
-    public static func at(_ x: CGFloat, startX: CGFloat, endX: CGFloat, playheadX: CGFloat?,
-                          handleWidth: CGFloat = 10) -> GIFTimelineTarget {
-        let slop: CGFloat = 4
+    /// easy to catch without looking bigger. The dot (`playhead`, its centre) catches within `dotHitRadius`.
+    public static func at(_ point: CGPoint, startX: CGFloat, endX: CGFloat, playhead: CGPoint?,
+                          handleWidth: CGFloat = 10, dotHitRadius: CGFloat = 8) -> GIFTimelineTarget {
+        let x = point.x, slop: CGFloat = 4
         let onStart = x >= startX - handleWidth - slop && x <= startX + slop
         let onEnd = x >= endX - slop && x <= endX + handleWidth + slop
         if onStart && onEnd {
@@ -81,7 +82,7 @@ public enum GIFTimelineTarget: Equatable {
         }
         if onStart { return .startHandle }
         if onEnd { return .endHandle }
-        if let px = playheadX, abs(x - px) <= slop { return .playhead }
+        if let p = playhead, hypot(point.x - p.x, point.y - p.y) <= dotHitRadius { return .playhead }
         return x > startX && x < endX ? .range : .seek
     }
 }
@@ -360,12 +361,22 @@ final class GIFSegmentEditorView: NSView {
         player?.seek(to: CMTime(seconds: time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    /// Playing: carries on from the playhead if it's inside the part, otherwise loops the part from its start.
-    /// Paused: stays on the frame that was last shown.
+    /// Edges and the part never move the playhead: afterwards the video goes back to it. Playing: carries on from the
+    /// playhead if it's inside the part, otherwise loops the part from its start. Paused: shows the playhead's frame.
+    /// Looking at a moment outside the part (a click there, or the dot dragged there) pauses on that frame: the loop
+    /// would otherwise pull the playhead straight back.
     private func timelineDragEnded(_ edge: SegmentTimelineView.Edge) {
         updateLabels()
-        guard isPlaying, let segment = segment else { return }
-        if edge == .playhead && segment.contains(timeline.playhead) { play(from: timeline.playhead) } else { playSegmentFromStart() }
+        guard let segment = segment else { return }
+        if edge == .playhead && isPlaying && !segment.contains(timeline.playhead) {
+            isPlaying = false
+            updatePlayButton()
+        }
+        if isPlaying {
+            if segment.contains(timeline.playhead) { play(from: timeline.playhead) } else { playSegmentFromStart() }
+        } else {
+            player?.seek(to: CMTime(seconds: timeline.playhead, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
     }
 
     private func updateLabels() {
@@ -422,18 +433,24 @@ final class GIFSegmentEditorView: NSView {
 // MARK: - Filmstrip
 
 /// The whole video as a filmstrip. The chosen part is framed in the accent colour with a handle on each side; the rest
-/// is dimmed. Drag a handle to move that edge, drag the part to move it whole, drag the playhead (or anywhere outside the
-/// part) to scrub, click to look at that moment.
-final class SegmentTimelineView: NSView {
-    enum Edge { case start, end, range, playhead }
+/// is dimmed. Drag a handle to move that edge, drag the part to move it whole, click to look at that moment. The playhead
+/// is Que's dot: press it and it stretches into a pill you drag along; let go and it's a dot again.
+/// Public only so the tests can drive it with real mouse events.
+public final class SegmentTimelineView: NSView {
+    public enum Edge { case start, end, range, playhead }
     static let handleWidth: CGFloat = 10
+    private static let dotSize: CGFloat = 12
+    private static let pillSize = CGSize(width: 9, height: 30)
 
-    var segment: GIFSegment? { didSet { updateAccessibilityFrames(); needsDisplay = true } }
-    var playhead: Double = 0 { didSet { if playhead != oldValue { needsDisplay = true } } }
+    public var segment: GIFSegment? { didSet { updateAccessibilityFrames(); placePlayhead(); needsDisplay = true } }
+    public var playhead: Double = 0 { didSet { if playhead != oldValue { placePlayhead() } } }
+    private let playheadLayer = CALayer()
     var thumbnails: [CGImage?] = [] { didSet { needsDisplay = true } }
-    var isEnabled = true { didSet { if !isEnabled { endDrag(notify: false) }; needsDisplay = true } }
-    var onChange: ((Edge, Double) -> Void)?
-    var onDragEnded: ((Edge) -> Void)?
+    var isEnabled = true {
+        didSet { if !isEnabled { endDrag(notify: false) }; playheadLayer.opacity = isEnabled ? 1 : 0.5; needsDisplay = true }
+    }
+    public var onChange: ((Edge, Double) -> Void)?
+    public var onDragEnded: ((Edge) -> Void)?
     /// True from press to release (the player stops moving the playhead meanwhile).
     private(set) var isDragging = false
     private var dragEdge: Edge?
@@ -448,16 +465,62 @@ final class SegmentTimelineView: NSView {
 
     var stripRect: NSRect { bounds.insetBy(dx: Self.handleWidth, dy: 0) }
 
-    override init(frame: NSRect) {
+    public override init(frame: NSRect) {
         super.init(frame: frame)
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Video timeline")
+        // Its own layer, so the dot can grow into the pill smoothly while the filmstrip stays drawn as it is.
+        wantsLayer = true
+        playheadLayer.backgroundColor = NSColor.white.cgColor
+        playheadLayer.cornerRadius = Self.dotSize / 2
+        playheadLayer.borderColor = NSColor.black.withAlphaComponent(0.25).cgColor
+        playheadLayer.borderWidth = 0.5
+        playheadLayer.shadowColor = NSColor.black.cgColor
+        playheadLayer.shadowOpacity = 0.5
+        playheadLayer.shadowRadius = 2.5
+        playheadLayer.shadowOffset = .zero
+        playheadLayer.bounds = CGRect(x: 0, y: 0, width: Self.dotSize, height: Self.dotSize)
+        playheadLayer.isHidden = true
+        layer?.addSublayer(playheadLayer)
     }
+
+    public override func layout() {
+        super.layout()
+        placePlayhead()
+    }
+
+    /// Follows the time exactly (no implicit animation), centred on the strip.
+    private func placePlayhead() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playheadLayer.position = playheadCentre
+        playheadLayer.isHidden = segment == nil
+        CATransaction.commit()
+    }
+
+    private var playheadCentre: CGPoint { CGPoint(x: x(for: playhead), y: stripRect.midY) }
+
+    /// Dot ↔ pill: grows taller (and a touch narrower) around the same centre, so the playhead never shifts; the corner
+    /// radius stays half the width, so the ends are always fully round. Quick ease-out, no bounce; picks up from
+    /// wherever it is if interrupted. Instant with Reduce Motion.
+    private func setPill(_ pill: Bool) {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        CATransaction.begin()
+        CATransaction.setDisableActions(reduceMotion)
+        CATransaction.setAnimationDuration(0.15)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        let size = pill ? Self.pillSize : CGSize(width: Self.dotSize, height: Self.dotSize)
+        playheadLayer.bounds = CGRect(origin: .zero, size: size)
+        playheadLayer.cornerRadius = size.width / 2
+        CATransaction.commit()
+    }
+
+    public var isPill: Bool { playheadLayer.bounds.height > Self.dotSize }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func setThumbnail(_ image: CGImage, at index: Int) {
         guard thumbnails.indices.contains(index) else { return }
@@ -476,7 +539,7 @@ final class SegmentTimelineView: NSView {
 
     // MARK: Drawing
 
-    override func draw(_ dirtyRect: NSRect) {
+    public override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let strip = stripRect
 
@@ -529,35 +592,20 @@ final class SegmentTimelineView: NSView {
             context.fillPath()
         }
 
-        // Playhead: a white line with a soft dark edge and a small round cap, unlike the flat handles.
-        let px = x(for: playhead)
-        guard px >= strip.minX, px <= strip.maxX else { return }
-        let capY = strip.maxY - 7
-        let active = hover == .playhead || dragEdge == .playhead
-        let cap = NSRect(x: px - 3.5, y: capY, width: 7, height: 7).insetBy(dx: active ? -1 : 0, dy: active ? -1 : 0)
-        context.setFillColor(NSColor.black.withAlphaComponent(0.3).cgColor)
-        context.fill(NSRect(x: px - 1.5, y: strip.minY, width: 3, height: strip.height))
-        context.fillEllipse(in: cap.insetBy(dx: -0.5, dy: -0.5))
-        context.setFillColor(NSColor.white.cgColor)
-        context.fill(NSRect(x: px - 1, y: strip.minY, width: 2, height: strip.height))
-        context.fillEllipse(in: cap)
     }
 
     // MARK: Mouse
 
-    private func target(at x: CGFloat) -> GIFTimelineTarget? {
+    private func target(at point: NSPoint) -> GIFTimelineTarget? {
         guard let segment = segment else { return nil }
-        let px = self.x(for: playhead)
-        return GIFTimelineTarget.at(x, startX: self.x(for: segment.start), endX: self.x(for: segment.end),
-                                    playheadX: px >= stripRect.minX && px <= stripRect.maxX ? px : nil,
-                                    handleWidth: Self.handleWidth)
+        return GIFTimelineTarget.at(point, startX: x(for: segment.start), endX: x(for: segment.end),
+                                    playhead: playheadCentre, handleWidth: Self.handleWidth)
     }
 
-    override func mouseDown(with event: NSEvent) {
+    public override func mouseDown(with event: NSEvent) {
         endDrag(notify: false)   // a release we never saw (e.g. the pointer left the panel mid-drag)
-        guard isEnabled, let segment = segment, let target = target(at: convert(event.locationInWindow, from: nil).x) else { return }
-        let px = convert(event.locationInWindow, from: nil).x
-        isDragging = true
+        let point = convert(event.locationInWindow, from: nil), px = point.x
+        guard isEnabled, let segment = segment, let target = target(at: point) else { return }
         switch target {
         case .startHandle:
             dragEdge = .start; grabOffset = x(for: segment.start) - px
@@ -565,18 +613,27 @@ final class SegmentTimelineView: NSView {
             dragEdge = .end; grabOffset = x(for: segment.end) - px
         case .playhead:
             dragEdge = .playhead; grabOffset = x(for: playhead) - px
+            setPill(true)
         case .range:
             pendingRangePress = (px, time(at: px))   // click or drag: decided once the pointer moves
             grabTimeOffset = time(at: px) - segment.start
         case .seek:
-            dragEdge = .playhead; grabOffset = 0
-            drag(to: px)
+            seek(toX: px)   // a click, never the start of a drag: only the dot drags the playhead
+            return
         }
+        isDragging = true
         updateCursor(for: target)
         needsDisplay = true
     }
 
-    override func mouseDragged(with event: NSEvent) {
+    /// Moves the playhead to the time under `pointX` as one finished interaction.
+    private func seek(toX pointX: CGFloat) {
+        playhead = time(at: pointX)
+        onChange?(.playhead, playhead)
+        onDragEnded?(.playhead)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
         guard isDragging else { return }
         let px = convert(event.locationInWindow, from: nil).x
         if let press = pendingRangePress {
@@ -588,13 +645,12 @@ final class SegmentTimelineView: NSView {
         drag(to: px)
     }
 
-    override func mouseUp(with event: NSEvent) {
+    public override func mouseUp(with event: NSEvent) {
         guard isDragging else { return }
         if let press = pendingRangePress {   // a plain click on the part: look at that moment
-            pendingRangePress = nil
-            dragEdge = .playhead
-            grabOffset = 0
-            drag(to: press.x)
+            endDrag(notify: false)
+            seek(toX: press.x)
+            return
         }
         endDrag(notify: true)
         updateHover(at: convert(event.locationInWindow, from: nil))
@@ -603,6 +659,7 @@ final class SegmentTimelineView: NSView {
     private func endDrag(notify: Bool) {
         guard isDragging else { return }
         let edge = dragEdge
+        if edge == .playhead { setPill(false) }
         isDragging = false
         dragEdge = nil
         pendingRangePress = nil
@@ -610,12 +667,13 @@ final class SegmentTimelineView: NSView {
         if notify, let edge = edge { onDragEnded?(edge) }
     }
 
-    override func viewWillMove(toWindow newWindow: NSWindow?) {
+    public override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
         if newWindow == nil { endDrag(notify: false) }
     }
 
-    /// Only the dragged thing moves: an edge (the other stays put), the whole part (same length), or the playhead.
+    /// Only the dragged thing moves: an edge (the other stays put), the whole part (same length), or the playhead. The
+    /// video previews the moving edge's frame, but the playhead itself stays where it is.
     private func drag(to pointX: CGFloat) {
         guard var segment = segment, let edge = dragEdge else { return }
         let time: Double
@@ -630,13 +688,12 @@ final class SegmentTimelineView: NSView {
             return
         }
         self.segment = segment
-        playhead = time
         onChange?(edge, time)
     }
 
     // MARK: Hover and cursor
 
-    override func updateTrackingAreas() {
+    public override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let existing = trackingArea { removeTrackingArea(existing) }
         let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways],
@@ -645,10 +702,10 @@ final class SegmentTimelineView: NSView {
         trackingArea = area
     }
 
-    override func mouseMoved(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
-    override func mouseEntered(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
+    public override func mouseMoved(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
+    public override func mouseEntered(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
 
-    override func mouseExited(with event: NSEvent) {
+    public override func mouseExited(with event: NSEvent) {
         guard !isDragging else { return }
         hover = nil
         NSCursor.arrow.set()
@@ -656,7 +713,7 @@ final class SegmentTimelineView: NSView {
 
     private func updateHover(at point: NSPoint) {
         guard !isDragging else { return }
-        hover = isEnabled && bounds.contains(point) ? target(at: point.x) : nil
+        hover = isEnabled && bounds.contains(point) ? target(at: point) : nil
         updateCursor(for: hover)
     }
 
@@ -673,9 +730,7 @@ final class SegmentTimelineView: NSView {
         guard isEnabled, var segment = segment else { return }
         if edge == .start { segment.moveStart(to: segment.start + delta) } else { segment.moveEnd(to: segment.end + delta) }
         self.segment = segment
-        let time = edge == .start ? segment.start : segment.end
-        playhead = time
-        onChange?(edge, time)
+        onChange?(edge, edge == .start ? segment.start : segment.end)
         onDragEnded?(edge)
     }
 
@@ -684,7 +739,7 @@ final class SegmentTimelineView: NSView {
         return GIFSegment.timeLabel(edge == .start ? segment.start : segment.end)
     }
 
-    override func accessibilityChildren() -> [Any]? { segment == nil ? [] : handleElements }
+    public override func accessibilityChildren() -> [Any]? { segment == nil ? [] : handleElements }
 
     private func updateAccessibilityFrames() {
         guard let segment = segment else { return }

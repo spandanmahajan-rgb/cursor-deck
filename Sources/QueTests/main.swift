@@ -8,6 +8,11 @@ import ImageIO
 import AVFoundation
 import QueCore
 
+/// Tests that contact Pinterest run only with QUE_LIVE_TESTS=1 (release.sh sets it): every run counts against
+/// Pinterest's request limit, and repeated dev runs hit it.
+let runLiveTests = ProcessInfo.processInfo.environment["QUE_LIVE_TESTS"] == "1"
+if !runLiveTests { print("ℹ️ Live Pinterest checks skipped (QUE_LIVE_TESTS=1 to run them)") }
+
 func createMockPNGData() -> Data {
     let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
@@ -279,7 +284,7 @@ func testPillNoticeWording() {
     offer.primaryAction?()
     assert(chose && !addedAll, "⌥-click on a board offer opens the picker")
     offer.alternateAction?()
-    assert(addedAll, "⌥⇧-click on a board offer adds the batch")
+    assert(addedAll, "⌥-click and hold on a board offer adds the batch")
     assert(PillNotice.boardAdded(added: 45, requested: 48, name: "Refs").tone == .warning)
     assert(PillNotice.boardAdded(added: 3, requested: 3, name: "Refs").duration == 2, "Plain confirmation is brief")
     let prep = PillNotice.boardPreparing(name: "Refs")
@@ -493,6 +498,17 @@ func testWelcomeOnFreshInstalls() {
     assert(!WelcomeWindowController.shouldShowWelcome(copyID: "300", defaults: d), "Failed update: no welcome")
     assert(WelcomeWindowController.shouldShowWelcome(copyID: "400", defaults: d), "...and the note doesn't linger")
     assert(!WelcomeWindowController.shouldShowWelcome(copyID: nil, defaults: d), "Development builds: never")
+
+    // Installed before the "How should Que come to you?" choice: the first update shows the welcome once.
+    let suite2 = "com.que.tests.welcome2.\(UUID().uuidString)"
+    let old = UserDefaults(suiteName: suite2)!
+    defer { old.removePersistentDomain(forName: suite2) }
+    old.set("10", forKey: "Que_lastLaunchedCopy")
+    old.set(true, forKey: WelcomeWindowController.updateInProgressKey)
+    assert(WelcomeWindowController.shouldShowWelcome(copyID: "11", defaults: old), "First update with the choice: welcome once")
+    assert(!WelcomeWindowController.shouldShowWelcome(copyID: "11", defaults: old), "Then normal launches: none")
+    old.set(true, forKey: WelcomeWindowController.updateInProgressKey)
+    assert(!WelcomeWindowController.shouldShowWelcome(copyID: "12", defaults: old), "Later updates: none")
     print("✅ testWelcomeOnFreshInstalls passed!")
 }
 
@@ -524,6 +540,147 @@ func testWorkingIndicator() {
     assert(!panel.isVisible, "Done and still empty (e.g. cancelled): hidden again")
     assert(PillNotice.makingGIF().message == "Making a GIF" && PillNotice.makingGIF().detail == "Saving it a spot in Que.", "Wording")
     print("✅ testWorkingIndicator passed!")
+}
+
+func testControlDoubleTap() {
+    print("Running testControlDoubleTap...")
+    // Feeds (⌃ down?, time) polls; `keyAt` = when the last other key/click happened.
+    func run(_ polls: [(Bool, TimeInterval)], others: Bool = false, keyAt: TimeInterval = -100) -> Bool {
+        var d = ControlDoubleTap()
+        var fired = false
+        for (down, t) in polls {
+            if d.update(controlDown: down, otherModifiers: others, secondsSinceKeyOrClick: t - keyAt, now: t) { fired = true }
+        }
+        return fired
+    }
+    let quick: [(Bool, TimeInterval)] = [(false, 0), (true, 0.1), (false, 0.2), (true, 0.4), (false, 0.5)]
+    assert(run(quick), "Two quick taps fire")
+    assert(!run(Array(quick.prefix(3))), "One tap doesn't")
+    assert(!run([(false, 0), (true, 0.1), (false, 0.2), (true, 0.7), (false, 0.8)]), "Taps too far apart")
+    assert(!run([(false, 0), (true, 0.1), (false, 0.6), (true, 0.7), (false, 0.8)]), "A held ⌃ (⌃-click) isn't a tap")
+    assert(!run(quick, keyAt: 0.3), "⌃C ⌃C: a key between the taps cancels")
+    assert(!run(quick, keyAt: 0.45), "A key during the second tap cancels")
+    assert(!run(quick, others: true), "⌃ with another modifier isn't a tap")
+    var d = ControlDoubleTap(); var fires = 0
+    for (down, t) in quick + quick.map({ ($0.0, $0.1 + 0.9) }) + quick.map({ ($0.0, $0.1 + 1.8) }) {
+        if d.update(controlDown: down, otherModifiers: false, secondsSinceKeyOrClick: 100, now: t) { fires += 1 }
+    }
+    assert(fires == 3, "Each double-tap fires once (toggle on, off, on), got \(fires)")
+    print("✅ testControlDoubleTap passed!")
+}
+
+/// Board offer: a short ⌥-click chooses pins; holding the click adds the whole board, once, and the shake that marks
+/// the hold stays on its anchor and always comes to rest (let go early, held through, or dragged away).
+func testHoldAddsWholeBoard() {
+    print("Running testHoldAddsWholeBoard...")
+    let view = DeckHUDView(frame: NSRect(x: 0, y: 0, width: 220, height: 42))
+    let window = NSWindow(contentRect: NSRect(x: 300, y: 300, width: 220, height: 42), styleMask: .borderless,
+                          backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.contentView = view
+    defer { window.close() }
+    let anchor = window.frame.origin
+    var chose = 0, added = 0
+    view.setNotice(.boardOffer(name: "B", pinCount: 5, cap: 100, addAll: { added += 1 }, choose: { chose += 1 }))
+    func mouse(_ type: NSEvent.EventType, _ flags: NSEvent.ModifierFlags = .option) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                           context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+    var maxDrift: CGFloat = 0
+    func run(_ seconds: TimeInterval) {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            maxDrift = max(maxDrift, abs(window.frame.origin.x - anchor.x))
+            assert(window.frame.origin.y == anchor.y, "The shake is side to side only")
+        }
+    }
+    func hold(_ seconds: TimeInterval) {
+        view.mouseDown(with: mouse(.leftMouseDown)); run(seconds); view.mouseUp(with: mouse(.leftMouseUp)); run(0.6)
+        assert(window.frame.origin == anchor, "Comes to rest exactly on its anchor")
+    }
+
+    hold(0.05)
+    assert(chose == 1 && added == 0, "A short click still chooses pins")
+    hold(0.5)
+    assert(chose == 1 && added == 0, "Let go mid-shake: nothing runs, not even the click")
+    let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    maxDrift = 0
+    hold(1.2)
+    assert(chose == 1 && added == 1, "Held past the threshold: the whole board is added, once, and the click doesn't run")
+    // ±1.5 pt; a window off any Retina screen snaps to whole points, so up to 2.
+    assert(reduceMotion ? maxDrift == 0 : (maxDrift > 0.3 && maxDrift <= 2), "Small shake, no drift: \(maxDrift)")
+
+
+    // Adding swaps the offer for a notice with no choices: letting go then must not also copy everything in Que.
+    let queue = DeckQueueManager()
+    defer { queue.cleanup() }
+    _ = queue.add(imageData: createMockPNGData(), extension: "png")
+    view.queueManager = queue
+    view.setNotice(.boardOffer(name: "B", pinCount: 5, cap: 100,
+                               addAll: { added += 1; view.setNotice(.boardPreparing(name: "B")) }, choose: {}))
+    let clipboard = NSPasteboard.general.changeCount
+    view.mouseDown(with: mouse(.leftMouseDown, [])); run(1.2); view.mouseUp(with: mouse(.leftMouseUp, [])); run(0.6)
+    assert(added == 2, "Held again: added once more")
+    assert(NSPasteboard.general.changeCount == clipboard, "The release after a hold isn't also a click on Que")
+    print("✅ testHoldAddsWholeBoard passed!")
+}
+
+func testCallStyleWording() {
+    print("Running testCallStyleWording...")
+    defer { UserDefaults.standard.removeObject(forKey: "Que_doubleTapControl") }
+    for doubleTap in [false, true] {
+        QueControls.usesDoubleTap = doubleTap
+        let other = doubleTap ? "⌥-click" : "⌃"
+        let notices = [PillNotice.boardOffer(name: "B", pinCount: 200, cap: 100, addAll: {}, choose: {}),
+                       PillNotice.boardAlreadyAdded(name: "B", choose: {}), PillNotice.gifEditFailed()]
+        for n in notices { assert(!(n.detail ?? "").contains(other), "Notice mixes ways: \(n.detail ?? "")") }
+    }
+    assert(PillNotice.boardOffer(name: "B", pinCount: 5, cap: 100, addAll: {}, choose: {}).detail
+           == "⌃⌃ then click to choose, hold to add all", "⌃⌃ wording")
+    print("✅ testCallStyleWording passed!")
+}
+
+func testPinterestWaitIsRemembered() {
+    print("Running testPinterestWaitIsRemembered...")
+    defer { PinterestBoardResolver.forgetLimit() }
+    let now = Date()
+    PinterestBoardResolver.rememberLimit(retryAfter: 120, now: now)
+    assert(abs((PinterestBoardResolver.remainingWait(now: now) ?? 0) - 120) < 0.01, "Waits as long as Pinterest says")
+    PinterestBoardResolver.rememberLimit(retryAfter: 30, now: now)
+    assert((PinterestBoardResolver.remainingWait(now: now) ?? 0) > 100, "A shorter answer never shortens the wait")
+    assert(PinterestBoardResolver.remainingWait(now: now.addingTimeInterval(121)) == nil, "Asks again once it's over")
+    PinterestBoardResolver.rememberLimit(retryAfter: nil, now: now)
+    assert(abs((PinterestBoardResolver.remainingWait(now: now) ?? 0) - 300) < 0.01, "No answer: 5 minutes")
+
+    // During the wait, lookups answer straight away without touching the network.
+    PinterestBoardResolver.rememberLimit(retryAfter: 600)
+    var board: Result<PinterestBoard, PinterestError>?
+    PinterestBoardResolver().fetchBoard(username: "someone", slug: "refs") { board = $0 }
+    if case .failure(.rateLimited(let wait))? = board { assert(wait! > 590, "Reports the time left") }
+    else { assert(false, "Board lookup must answer 'limited' at once, got \(String(describing: board))") }
+    var pin: PinterestMediaResult??
+    PinterestMediaResolver.shared.resolveMedia(from: "https://www.pinterest.com/pin/664281013778109217/") { pin = $0 }
+    if case .rateLimited? = pin ?? nil {} else { assert(false, "Pin lookup must answer 'limited' at once") }
+    print("✅ testPinterestWaitIsRemembered passed!")
+}
+
+func testSnapEndsWhenQueEmpties() {
+    print("Running testSnapEndsWhenQueEmpties...")
+    QueControls.usesDoubleTap = true
+    defer { UserDefaults.standard.removeObject(forKey: "Que_doubleTapControl") }
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let panel = CursorHUDPanel(queueManager: queueManager)
+    _ = queueManager.add(imageData: createMockPNGData())
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    let view = panel.contentView as! DeckHUDView
+    panel.isTapSnapped = true
+    assert(view.isTapSnapped, "Snapped: the badge shows it")
+    queueManager.clear()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    assert(!view.isTapSnapped, "Que emptied while snapped: the next copy must not come back snapped")
+    print("✅ testSnapEndsWhenQueEmpties passed!")
 }
 
 func testPinterestLiveBoard() {
@@ -779,6 +936,85 @@ func testCopiedVideoKeepsItsSource() {
     print("✅ testCopiedVideoKeepsItsSource passed!")
 }
 
+/// Stream-only pins: Que downloads the stream's one-file rendition like an MP4 (fast, and kept for the GIF editor);
+/// streams split into pieces, or encrypted, still go the real-time way.
+func testStreamOnlyPinsBecomeFiles() {
+    print("Running testStreamOnlyPinsBecomeFiles...")
+    let base = URL(string: "https://v1.pinimg.com/videos/iht/hls/2c/ee/32/abc.m3u8")!
+    let master = """
+    #EXTM3U
+    #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio1",NAME="1",URI="abc_audio.m3u8",CHANNELS="2"
+    #EXT-X-STREAM-INF:BANDWIDTH=296592,RESOLUTION=240x300,FRAME-RATE=30,AUDIO="audio1"
+    abc_240w.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=705800,RESOLUTION=544x680,FRAME-RATE=30,AUDIO="audio1"
+    abc_540w.m3u8
+
+    #EXT-X-STREAM-INF:BANDWIDTH=1146728,RESOLUTION=720x900,FRAME-RATE=30,AUDIO="audio1"
+    abc_720w.m3u8
+    """
+    assert(PinterestMediaResolver.bestVariant(inMasterPlaylist: master, base: base, targetWidth: 500)?.absoluteString
+           == "https://v1.pinimg.com/videos/iht/hls/2c/ee/32/abc_540w.m3u8", "Smallest rendition that covers the GIF")
+    assert(PinterestMediaResolver.bestVariant(inMasterPlaylist: master, base: base, targetWidth: 1000)?.lastPathComponent
+           == "abc_720w.m3u8", "None wide enough: the widest")
+    assert(PinterestMediaResolver.bestVariant(inMasterPlaylist: "#EXTM3U\n", base: base, targetWidth: 500) == nil)
+
+    let oneFile = """
+    #EXTM3U
+    #EXT-X-PLAYLIST-TYPE:VOD
+    #EXT-X-MAP:URI="abc_540w.cmfv",BYTERANGE="978@0"
+    #EXTINF:2
+    #EXT-X-BYTERANGE:153621@1102
+    abc_540w.cmfv
+    #EXTINF:2
+    #EXT-X-BYTERANGE:128662@154723
+    abc_540w.cmfv
+    #EXT-X-ENDLIST
+    """
+    let variant = URL(string: "https://v1.pinimg.com/videos/iht/hls/2c/ee/32/abc_540w.m3u8")!
+    assert(PinterestMediaResolver.singleMediaFile(inMediaPlaylist: oneFile, base: variant)?.absoluteString
+           == "https://v1.pinimg.com/videos/iht/hls/2c/ee/32/abc_540w.cmfv", "One file: download it")
+    let huge = oneFile.replacingOccurrences(of: "153621@1102", with: "60000000@1102")
+    assert(PinterestMediaResolver.singleMediaFile(inMediaPlaylist: huge, base: variant) == nil,
+           "Over 40 MB: record the stream instead of downloading it all")
+    let pieces = "#EXTM3U\n#EXTINF:2\nseg1.ts\n#EXTINF:2\nseg2.ts\n"
+    assert(PinterestMediaResolver.singleMediaFile(inMediaPlaylist: pieces, base: variant) == nil, "Pieces: real-time, as before")
+    let encrypted = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"k\"\n#EXTINF:2\nv.cmfv\n"
+    assert(PinterestMediaResolver.singleMediaFile(inMediaPlaylist: encrypted, base: variant) == nil, "Encrypted: never")
+
+    guard runLiveTests else { print("✅ testStreamOnlyPinsBecomeFiles passed (live part skipped)"); return }
+    // Live: a stream-only pin (no MP4 at all) now resolves to its one file.
+    var result: PinterestMediaResult?, answered = false
+    PinterestMediaResolver.shared.resolveMedia(from: "https://in.pinterest.com/pin/1133499799977101611/") {
+        result = $0; answered = true
+    }
+    waitFor(15) { answered }
+    // Pinterest can change or remove this pin: anything but a single-file video skips the live checks (it's their
+    // side that changed, so it must not block a release).
+    guard case .video(let url)? = result, !url.absoluteString.contains(".m3u8") else {
+        print("   ⚠️ The live stream-only pin isn't a single-file video right now; skipping the live checks")
+        print("✅ testStreamOnlyPinsBecomeFiles passed!")
+        return
+    }
+    print("   Stream-only pin resolved to:", url.lastPathComponent)
+
+    // Live, the whole way: copying that pin's link gives a GIF with the pencil (its video is kept in Que's folder).
+    let queueManager = DeckQueueManager()
+    defer { queueManager.cleanup() }
+    let pasteboard = NSPasteboard(name: NSPasteboard.Name("com.que.tests.\(UUID().uuidString)"))
+    defer { pasteboard.releaseGlobally() }
+    let watcher = ClipboardWatcher(queueManager: queueManager, pasteboard: pasteboard)
+    pasteboard.clearContents()
+    pasteboard.setString("https://in.pinterest.com/pin/1133499799977101611/", forType: .string)
+    watcher.checkForNewClipboardContent()
+    waitFor(40) { queueManager.count == 1 }
+    if let gif = queueManager.items.first {
+        assert(GIFSegmentEditing.canEdit(gif) && queueManager.owns(gif.sourceVideoURL!), "Stream-only pin's GIF can be edited")
+    } else {
+        print("   ⚠️ The pin didn't arrive (network); skipping the copy check")
+    }
+    print("✅ testStreamOnlyPinsBecomeFiles passed!")
+}
+
 /// Start/end handles: independent, clamped to the video, never shorter than 0.5 s or longer than 8 s.
 func testGIFSegmentSelection() {
     print("Running testGIFSegmentSelection...")
@@ -827,17 +1063,20 @@ func testGIFSegmentSelection() {
     assert(edges.start == 12 && edges.end == 16, "Right handle: the start stays put")
     assert(edges.contains(12) && edges.contains(15.9) && !edges.contains(16) && !edges.contains(11.9))
 
-    // What a press grabs. Part at x 100–200, handles 10 pt outside it, playhead at 150.
-    func hit(_ x: CGFloat, start: CGFloat = 100, end: CGFloat = 200, playhead: CGFloat? = 150) -> GIFTimelineTarget {
-        GIFTimelineTarget.at(x, startX: start, endX: end, playheadX: playhead)
+    // What a press grabs. Part at x 100–200, handles 10 pt outside it, the playhead dot at (150, 22).
+    func hit(_ x: CGFloat, _ y: CGFloat = 22, start: CGFloat = 100, end: CGFloat = 200,
+             dot: CGPoint? = CGPoint(x: 150, y: 22)) -> GIFTimelineTarget {
+        GIFTimelineTarget.at(CGPoint(x: x, y: y), startX: start, endX: end, playhead: dot)
     }
     assert(hit(95) == .startHandle && hit(87) == .startHandle && hit(103) == .startHandle, "Left handle, with slop")
     assert(hit(205) == .endHandle && hit(213) == .endHandle && hit(197) == .endHandle, "Right handle, with slop")
-    assert(hit(150) == .playhead && hit(153) == .playhead, "The playhead line")
+    assert(hit(150) == .playhead && hit(155) == .playhead && hit(150, 28) == .playhead, "On the dot")
+    assert(hit(150, 40) == .range && hit(150, 4) == .range, "Above or below the dot is the part's body, not the playhead")
     assert(hit(120) == .range && hit(180) == .range, "The part's body moves the part")
-    assert(hit(120, playhead: nil) == .range, "No playhead on screen: still the body")
+    assert(hit(120, dot: nil) == .range, "No playhead: still the body")
     assert(hit(50) == .seek && hit(260) == .seek, "Outside the part: seek")
-    assert(hit(101, playhead: 101) == .startHandle, "A handle wins over the playhead sitting on it")
+    assert(hit(101, dot: CGPoint(x: 101, y: 22)) == .startHandle, "A handle wins over the dot sitting on it")
+    assert(hit(97, dot: CGPoint(x: 100, y: 22)) == .startHandle, "Even when the dot sits right on the edge")
     // A very short part (3 pt wide): both handles overlap the body; the nearer handle wins, never the wrong one.
     assert(hit(98, start: 100, end: 103) == .startHandle && hit(106, start: 100, end: 103) == .endHandle)
 
@@ -848,6 +1087,82 @@ func testGIFSegmentSelection() {
     assert(VideoToGIFConverter.frameTimes(start: 9, length: 4, sourceDuration: 10, fps: 14).count == 14, "Clamped at the end")
     assert(VideoToGIFConverter.frameTimes(start: 11, length: 4, sourceDuration: 10, fps: 14).isEmpty, "Past the end: nothing")
     print("✅ testGIFSegmentSelection passed!")
+}
+
+/// The filmstrip with real mouse events: each interaction moves only its own thing. Handles and the part never move
+/// the playhead; only a press on the dot drags it (and makes it a pill); a click elsewhere seeks without dragging.
+func testTimelineInteractions() {
+    print("Running testTimelineInteractions...")
+    // As in the editor: 392 pt wide, so the 10 s video spans x 10–382 (37.2 pt a second); the strip's middle is y 22.
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 392, height: 44), styleMask: .borderless,
+                          backing: .buffered, defer: false)
+    let timeline = SegmentTimelineView(frame: NSRect(x: 0, y: 0, width: 392, height: 44))
+    window.contentView = timeline
+    func x(_ t: Double) -> CGFloat { 10 + CGFloat(t) * 37.2 }
+    func event(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat = 22) -> NSEvent {
+        NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: y), modifierFlags: [], timestamp: 0,
+                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+    }
+    var changes: [(SegmentTimelineView.Edge, Double)] = [], ended: [SegmentTimelineView.Edge] = []
+    timeline.onChange = { changes.append(($0, $1)) }
+    timeline.onDragEnded = { ended.append($0) }
+    func reset(start: Double = 2, length: Double = 4, playhead: Double = 3) {
+        timeline.segment = GIFSegment(sourceDuration: 10, start: start, length: length)
+        timeline.playhead = playhead
+        changes = []; ended = []
+    }
+    func press(_ x0: CGFloat, drag dx: CGFloat? = nil, y: CGFloat = 22) {
+        timeline.mouseDown(with: event(.leftMouseDown, x0, y))
+        if let dx = dx { timeline.mouseDragged(with: event(.leftMouseDragged, x0 + dx / 2, y))
+                         timeline.mouseDragged(with: event(.leftMouseDragged, x0 + dx, y)) }
+        timeline.mouseUp(with: event(.leftMouseUp, x0 + (dx ?? 0), y))
+    }
+    let near = { (a: Double, b: Double) in abs(a - b) < 0.05 }
+
+    // Left handle (its grip sits 5 pt left of the part): only the start changes; the playhead stays put.
+    reset()
+    press(x(2) - 5, drag: 37.2)
+    assert(near(timeline.segment!.start, 3) && timeline.segment!.end == 6 && timeline.playhead == 3,
+           "Left handle: start moves, end and playhead don't (\(timeline.segment!), playhead \(timeline.playhead))")
+    assert(ended == [.start] && !changes.contains { $0.0 == .playhead }, "Reported as a start edit only")
+    // A plain click on the left edge (the old bug): nothing moves.
+    reset()
+    press(x(2) - 2)
+    assert(timeline.segment == GIFSegment(sourceDuration: 10, start: 2, length: 4) && timeline.playhead == 3,
+           "Clicking an edge never moves the playhead")
+    // Right handle: only the end changes.
+    reset()
+    press(x(6) + 5, drag: 37.2)
+    assert(timeline.segment!.start == 2 && near(timeline.segment!.end, 7) && timeline.playhead == 3, "Right handle")
+
+    // Body (above the dot's line, away from it): the whole part moves, same length; the playhead stays.
+    reset()
+    press(x(4), drag: 74.4, y: 38)
+    assert(near(timeline.segment!.start, 4) && abs(timeline.segment!.length - 4) < 1e-9 && timeline.playhead == 3,
+           "Body drag moves the part, keeps its length, leaves the playhead")
+    reset()
+    press(x(4), drag: 1000, y: 38)
+    assert(timeline.segment!.end == 10 && abs(timeline.segment!.length - 4) < 1e-9, "Clamped at the video's end")
+    // A plain click on the body looks at that moment.
+    reset()
+    press(x(5), y: 38)
+    assert(near(timeline.playhead, 5) && timeline.segment!.start == 2 && ended == [.playhead], "Body click seeks")
+
+    // The dot: press makes it a pill without moving it; dragging moves only the playhead; release makes it a dot.
+    reset(playhead: 4)
+    timeline.mouseDown(with: event(.leftMouseDown, x(4) + 3))
+    assert(timeline.isPill && timeline.playhead == 4, "Pressing the dot: a pill, no jump (grab point kept)")
+    timeline.mouseDragged(with: event(.leftMouseDragged, x(5) + 3))
+    assert(near(timeline.playhead, 5) && timeline.segment!.start == 2 && timeline.segment!.end == 6, "Dragging the pill")
+    timeline.mouseUp(with: event(.leftMouseUp, x(5) + 3))
+    assert(!timeline.isPill && near(timeline.playhead, 5) && ended == [.playhead], "Released: a dot again, same time")
+
+    // Outside the part: a click seeks, and dragging from there doesn't drag the playhead.
+    reset()
+    press(x(8.5), drag: 74.4)
+    assert(near(timeline.playhead, 8.5) && !timeline.isPill && timeline.segment!.start == 2,
+           "A timeline click seeks once; the following drag does nothing")
+    print("✅ testTimelineInteractions passed!")
 }
 
 /// Replacing keeps the item's identity, place and source; a missing item changes nothing.
@@ -964,6 +1279,8 @@ func testGIFSegmentEditingEndToEnd() {
 
 testGIFSegmentSelection()
 testCopiedVideoKeepsItsSource()
+testStreamOnlyPinsBecomeFiles()
+testTimelineInteractions()
 testReplaceGIFInPlace()
 testGIFSourceVideoCleanup()
 testGIFSegmentEditingEndToEnd()
@@ -978,7 +1295,7 @@ testPasteboardWriterPayload()
 testDragPasteboard()
 testHUDPanelLifecycle()
 testPinterestMediaResolverURLDetection()
-testPinterestLiveVideoResolution()
+if runLiveTests { testPinterestLiveVideoResolution() }
 testPinterestBoardURLDetection()
 testPillNoticeWording()
 testBoardPickerSelection()
@@ -991,5 +1308,10 @@ testLoginItemMigration()
 testUpdateDotAssets()
 testWelcomeOnFreshInstalls()
 testWorkingIndicator()
-testPinterestLiveBoard()
+testControlDoubleTap()
+testCallStyleWording()
+testPinterestWaitIsRemembered()
+testSnapEndsWhenQueEmpties()
+testHoldAddsWholeBoard()
+if runLiveTests { testPinterestLiveBoard() }
 print("All verification tests passed successfully! 🚀\n")

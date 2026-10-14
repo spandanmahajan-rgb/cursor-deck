@@ -47,6 +47,8 @@ public final class DeckControlCenterState: ObservableObject {
     @Published public var isShakeClearEnabled: Bool = true
     @Published public var isLaunchAtLoginEnabled: Bool = false
     @Published public var isCopiedFeedback: Bool = false
+    /// How Que is called over: false = hold ⌥, true = tap ⌃ twice (QueControls).
+    @Published public var usesDoubleTap: Bool = QueControls.usesDoubleTap
     /// A newer version waiting to be installed (blue dot), or nil.
     @Published public var availableUpdate: String? = nil
 
@@ -86,6 +88,12 @@ public final class DeckControlCenterState: ObservableObject {
         self.isShakeClearEnabled = hudPanel?.shakeDetector.isEnabled ?? true
         self.isLaunchAtLoginEnabled = LaunchAtLoginManager.shared.isEnabled
         self.availableUpdate = UpdateManager.shared.availableVersion
+        self.usesDoubleTap = QueControls.usesDoubleTap
+    }
+
+    public func toggleCallStyle() {
+        QueControls.usesDoubleTap.toggle()
+        usesDoubleTap = QueControls.usesDoubleTap
     }
 
     public func toggleTracking() {
@@ -137,13 +145,6 @@ public final class DeckControlCenterState: ObservableObject {
     public func clearDeck() {
         queueManager?.clear()
         refresh()
-    }
-
-    public func openGrid(onDismiss: (() -> Void)? = nil) {
-        onDismiss?()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.hudPanel?.togglePreview()
-        }
     }
 
     public func checkForUpdates() {
@@ -436,14 +437,21 @@ public struct DeckControlCenterView: View {
                 action: { state.copyAll() }
             )
 
+            // How Que is called over; a click switches to the other way (the How to Use page follows).
             actionButton(
-                id: "grid",
-                symbol: "square.grid.2x2",
-                label: "Grid",
+                id: "call",
+                symbol: nil,   // the key glyphs are the icon
+                label: state.usesDoubleTap ? "⌃⌃ Tap" : "⌥ Hold",
                 isDestructive: false,
-                isEnabled: state.itemCount > 0,
-                action: { state.openGrid(onDismiss: onDismiss) }
+                isEnabled: true,
+                isHighlighted: !state.isTrackingPaused,   // blue = the chosen way is working (grey while paused)
+                action: { state.toggleCallStyle() }
             )
+            .help(state.usesDoubleTap
+                  ? "Tap ⌃ twice to call Que over. Click to hold ⌥ instead."
+                  : "Hold ⌥ to call Que over. Click to tap ⌃ twice instead.")
+            .accessibilityLabel(state.usesDoubleTap ? "Call Que over: tap Control twice" : "Call Que over: hold Option")
+            .accessibilityHint(state.usesDoubleTap ? "Switches to holding Option" : "Switches to tapping Control twice")
 
             actionButton(
                 id: "clear",
@@ -459,15 +467,16 @@ public struct DeckControlCenterView: View {
 
     private func actionButton(
         id: String,
-        symbol: String,
+        symbol: String?,
         label: String,
         isDestructive: Bool,
         isEnabled: Bool,
+        isHighlighted: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         let isHovered = hoveredAction == id
 
-        let normalBg = Color.primary.opacity(0.05)
+        let normalBg = isHighlighted ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)
         let hoverBg = isDestructive ? Color.red.opacity(0.12) : Color.primary.opacity(0.09)
         let currentBg = isHovered ? hoverBg : normalBg
 
@@ -476,6 +485,8 @@ public struct DeckControlCenterView: View {
             fgColor = Color.secondary.opacity(0.4)
         } else if isDestructive && isHovered {
             fgColor = Color.red
+        } else if isHighlighted {
+            fgColor = Color.accentColor
         } else {
             fgColor = Color.primary
         }
@@ -484,9 +495,11 @@ public struct DeckControlCenterView: View {
             if isEnabled { action() }
         }) {
             HStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.callout.weight(.medium))
-                    .foregroundColor(fgColor)
+                if let symbol = symbol {
+                    Image(systemName: symbol)
+                        .font(.callout.weight(.medium))
+                        .foregroundColor(fgColor)
+                }
 
                 Text(label)
                     .font(.callout.weight(.medium))
@@ -658,7 +671,7 @@ public struct DeckControlCenterView: View {
                             .padding(.top, 8)
                             .padding(.bottom, 4)
 
-                        ForEach(Self.gestureGuide) { instructionRow($0, proxy: proxy) }
+                        ForEach(Self.gestureGuide(doubleTap: state.usesDoubleTap)) { instructionRow($0, proxy: proxy) }
 
                         dividerView
                             .padding(.vertical, 6)
@@ -667,7 +680,7 @@ public struct DeckControlCenterView: View {
                             .padding(.horizontal, 6)
                             .padding(.bottom, 4)
 
-                        ForEach(Self.settingsGuide) { instructionRow($0, proxy: proxy) }
+                        ForEach(Self.settingsGuide(doubleTap: state.usesDoubleTap)) { instructionRow($0, proxy: proxy) }
                     }
                     .padding(.horizontal, 6)
                     .padding(.bottom, 10)
@@ -685,28 +698,36 @@ public struct DeckControlCenterView: View {
         let description: String
     }
 
-    static let gestureGuide: [GuideItem] = [
+    /// Describes only the chosen way of calling Que over (hold ⌥, or tap ⌃ twice), never both.
+    static func gestureGuide(doubleTap: Bool) -> [GuideItem] { [
         GuideItem(id: "collect", symbol: "doc.on.doc", title: "Collect Images", badge: "⌘ C",
                   description: "Copy any image from a browser, Finder or a design app (right-click › Copy Image, or ⌘C). It joins Que."),
         GuideItem(id: "screenshots", symbol: "camera.viewfinder", title: "Screenshots", badge: "⌘ ⇧ 4",
                   description: "Take a screenshot as usual and it goes straight into Que, not onto your desktop. Que hides while you pick an area."),
         GuideItem(id: "boards", symbol: "rectangle.stack", title: "Pinterest Boards", badge: "Link",
-                  description: "Copy a board link and Que offers it. ⌥-click Que to choose pins, or ⌥⇧-click to add them all (up to 100, skipping ones already in Que). Public boards only."),
+                  description: doubleTap
+                    ? "Copy a board link and Que offers it. Tap ⌃ twice, then click Que to choose pins, or click and hold to add them all (up to 100, skipping ones already in Que). Public boards only."
+                    : "Copy a board link and Que offers it. ⌥-click Que to choose pins, or ⌥-click and hold to add them all (up to 100, skipping ones already in Que). Public boards only."),
         GuideItem(id: "videos", symbol: "film.stack", title: "Videos to GIF", badge: "Link",
                   description: "Copy a Pinterest video pin's link, a link ending in .mp4 or .mov, or a video file in Finder, and Que turns it into a looping GIF (up to 4 seconds). To use another moment, hover the GIF in the preview and click the pencil. YouTube and similar sites aren't supported."),
-        GuideItem(id: "drop", symbol: "arrow.down.doc", title: "Drop on Slides", badge: "⌥ + Drag",
-                  description: "Hold ⌥ so Que snaps under the pointer, then drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go. Everything lands at once."),
-        GuideItem(id: "grid", symbol: "square.grid.2x2", title: "Preview Grid", badge: "⌥ + Click",
-                  description: "⌥-click Que to see everything in it. Click images to select them (⇧-click selects a range), then drag them out together or remove them with the trash button. Images you drag out stay in Que."),
+        GuideItem(id: "drop", symbol: "arrow.down.doc", title: "Drop on Slides", badge: doubleTap ? "⌃⌃ + Drag" : "⌥ + Drag",
+                  description: doubleTap
+                    ? "Tap ⌃ twice so Que snaps under the pointer and a light runs around it, then drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go. Everything lands at once. Tap ⌃ twice again to send Que back without dropping."
+                    : "Hold ⌥ so Que snaps under the pointer, then drag it onto Slides, Keynote, Figma or a chat like WhatsApp and let go. Everything lands at once."),
+        GuideItem(id: "grid", symbol: "square.grid.2x2", title: "Preview Grid", badge: doubleTap ? "⌃⌃ + Click" : "⌥ + Click",
+                  description: (doubleTap ? "Tap ⌃ twice, then click Que to see everything in it." : "⌥-click Que to see everything in it.")
+                    + " Click images to select them (⇧-click selects a range), then drag them out together or remove them with the trash button. Images you drag out stay in Que."),
         GuideItem(id: "shake", symbol: QueSymbol.shake, title: "Shake to Clear", badge: "Shake",
                   description: "Shake the pointer quickly from side to side to clear Que."),
         GuideItem(id: "messages", symbol: "text.bubble", title: "Que Messages", badge: nil,
-                  description: "Que grows to tell you what's happening, like a board being added. When a message offers a choice, ⌥-click Que for the first option or ⌥⇧-click for the other."),
-    ]
+                  description: doubleTap
+                    ? "Que grows to tell you what's happening, like a board being added. When a message offers a choice, tap ⌃ twice, then click Que for the first option, or click and hold for the other."
+                    : "Que grows to tell you what's happening, like a board being added. When a message offers a choice, ⌥-click Que for the first option, or ⌥-click and hold for the other."),
+    ] }
 
-    static let settingsGuide: [GuideItem] = [
+    static func settingsGuide(doubleTap: Bool) -> [GuideItem] { [
         GuideItem(id: "switch", symbol: "power", title: "Pause Que", badge: nil,
-                  description: "The switch at the top pauses or resumes Que. While paused, the dot turns orange, copies and screenshots are ignored, and Que stays out of your way: it doesn't snap when you hold ⌥ or react to clicks or shakes, so you can work freely in apps like Illustrator."),
+                  description: "The switch at the top pauses or resumes Que. While paused, the dot turns orange, copies and screenshots are ignored, and Que stays out of your way: it doesn't snap when you \(doubleTap ? "tap ⌃ twice" : "hold ⌥") or react to clicks or shakes, so you can work freely in apps like Illustrator."),
         GuideItem(id: "filter", symbol: "line.3.horizontal.decrease", title: "Smart Filter", badge: nil,
                   description: "Ignores shapes and text copied inside Figma, Photoshop and Illustrator, so only real images are collected."),
         GuideItem(id: "screenshots-setting", symbol: "camera.viewfinder", title: "Screenshots", badge: nil,
@@ -716,12 +737,12 @@ public struct DeckControlCenterView: View {
         GuideItem(id: "login", symbol: "power.circle", title: "Launch at Login", badge: nil,
                   description: "Starts Que in the menu bar when you log in."),
         GuideItem(id: "actions", symbol: "slider.horizontal.3", title: "Action Bar", badge: nil,
-                  description: "Buttons for Copy All, Grid Preview and Clear."),
+                  description: "Copy All, Clear, and how you call Que over: hold ⌥, or tap ⌃ twice. Click that one to switch; this guide follows your choice."),
         GuideItem(id: "menu", symbol: "menubar.rectangle", title: "Quick Menu", badge: "Right-click",
                   description: "Right-click the menu bar icon to copy, clear, pause, check for updates, report a problem or quit without opening this panel."),
         GuideItem(id: "privacy", symbol: "lock", title: "Privacy", badge: nil,
                   description: "Copies from password managers are ignored. Images stay in a private temporary folder, never in your own folders, and Que empties when you quit."),
-    ]
+    ] }
 
     /// Expand/collapse motion for a guide row; a plain fade when Reduce Motion is on.
     private var rowAnimation: Animation {
@@ -847,6 +868,7 @@ public struct KeycapBadgeView: View {
                 } else {
                     Text(token)
                         .font(.system(size: token.count == 1 ? 10.5 : 9.5, weight: .medium, design: .default))
+                        .fixedSize()
                         .foregroundColor(.primary.opacity(0.88))
                         .padding(.horizontal, token.count == 1 ? 4.5 : 5.5)
                         .padding(.vertical, 2.5)
@@ -871,6 +893,12 @@ public struct KeycapBadgeView: View {
             return ["⌥", "+", "Drag"]
         case "⌥ + Click":
             return ["⌥", "+", "Click"]
+        case "⌃⌃":
+            return ["⌃", "⌃"]
+        case "⌃⌃ + Drag":
+            return ["⌃⌃", "Drag"]   // one cap for the pair, no "+": keeps "Drop on Slides" from truncating
+        case "⌃⌃ + Click":
+            return ["⌃⌃", "Click"]
         default:
             return [string]
         }

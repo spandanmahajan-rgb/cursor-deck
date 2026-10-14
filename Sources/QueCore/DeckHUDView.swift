@@ -200,6 +200,7 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         noticeClipView.frame = bounds
         noticeClipView.layer?.cornerRadius = radius
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        layoutShinePath()
     }
 
     /// Tracking paused: the dot turns orange (green while active). A notice still shows its own tone colour.
@@ -214,6 +215,86 @@ public final class DeckHUDView: NSView, NSDraggingSource {
                 setAccessibilityValue(countDescription)
             }
         }
+    }
+
+    /// "Tap ⌃ twice" mode: snapped under the pointer. Any click is then a catch (click = preview, drag = drop), like ⌥
+    /// is today. Cue: a soft light runs around the glass rim. Reduce Motion: the rim just brightens.
+    public var isTapSnapped = false {
+        didSet { if isTapSnapped != oldValue { updateShine() } }
+    }
+
+    /// The rim light: a short bright stroke with a glow, travelling the capsule outline. The path goes round twice
+    /// and the stroke moves exactly one lap, so the loop has no seam.
+    private let shineLayer = CAShapeLayer()
+    private static let shineLap: CFTimeInterval = 2.4
+    private static let shineLength: CGFloat = 0.11   // of one lap
+
+    private func updateShine() {
+        guard let layer = layer else { return }
+        if shineLayer.superlayer == nil {
+            shineLayer.fillColor = nil
+            shineLayer.lineWidth = 1.5
+            shineLayer.lineCap = .round
+            shineLayer.shadowColor = NSColor.white.cgColor
+            shineLayer.shadowOffset = .zero
+            shineLayer.shadowRadius = 3
+            shineLayer.shadowOpacity = 0.9
+            shineLayer.zPosition = 10
+            layer.addSublayer(shineLayer)
+        }
+        shineLayer.removeAllAnimations()
+        guard isTapSnapped else {
+            fadeShine(to: 0)
+            return
+        }
+        layoutShinePath()
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if reduceMotion {
+            // Whole rim, steady: brighter than the usual hairline.
+            shineLayer.strokeColor = NSColor(white: 1, alpha: 0.7).cgColor
+            shineLayer.strokeStart = 0
+            shineLayer.strokeEnd = 1
+        } else {
+            shineLayer.strokeColor = NSColor(white: 1, alpha: 0.95).cgColor
+            let half = Self.shineLength / 2   // the stroke is measured on the doubled path
+            shineLayer.strokeStart = 0
+            shineLayer.strokeEnd = half
+            let start = CABasicAnimation(keyPath: "strokeStart")
+            start.fromValue = 0; start.toValue = 0.5
+            let end = CABasicAnimation(keyPath: "strokeEnd")
+            end.fromValue = half; end.toValue = 0.5 + half
+            let lap = CAAnimationGroup()
+            lap.animations = [start, end]
+            lap.duration = Self.shineLap
+            lap.repeatCount = .infinity
+            lap.timingFunction = CAMediaTimingFunction(name: .linear)
+            shineLayer.add(lap, forKey: "lap")
+        }
+        fadeShine(to: 1)
+    }
+
+    private func fadeShine(to opacity: Float) {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = shineLayer.presentation()?.opacity ?? shineLayer.opacity
+        fade.duration = 0.2
+        shineLayer.opacity = opacity
+        shineLayer.add(fade, forKey: "fade")
+    }
+
+    /// Follows the pill's size (notices grow it) without restarting the lap.
+    private func layoutShinePath() {
+        guard shineLayer.superlayer != nil else { return }
+        let rect = bounds.insetBy(dx: 0.75, dy: 0.75)
+        let radius = rect.height / 2
+        let once = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        let twice = CGMutablePath()
+        twice.addPath(once)
+        twice.addPath(once)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shineLayer.frame = bounds
+        shineLayer.path = twice
+        CATransaction.commit()
     }
 
     private var idleDotColor: NSColor {
@@ -418,33 +499,40 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
     public override func mouseDown(with event: NSEvent) {
         isPressed = true
-        if activeNotice?.hasActions == true {
-            clickHadOption = event.modifierFlags.contains(.option)
+        // A previous hold may still be settling; it belongs to that press, not this one.
+        if longPress == .fired || longPress == .cancelled { longPress = .idle }
+        if let notice = activeNotice, notice.hasActions {
+            clickHadOption = event.modifierFlags.contains(.option) || isTapSnapped
             clickHadShift = event.modifierFlags.contains(.shift)
             dragStartScreenPoint = NSEvent.mouseLocation
             isDraggingSessionActive = false
+            // Two choices (the board offer): holding the click picks the other one.
+            if notice.primaryAction != nil && notice.alternateAction != nil { beginLongPress() }
             return
         }
         guard let items = queueManager?.items, !items.isEmpty else { return }
         dragStartScreenPoint = NSEvent.mouseLocation
         isDraggingSessionActive = false
         // Remember ⌥ at press time (user may release it before mouse-up)
-        clickHadOption = event.modifierFlags.contains(.option)
+        clickHadOption = event.modifierFlags.contains(.option) || isTapSnapped
     }
 
     public override func mouseDragged(with event: NSEvent) {
-        guard let items = queueManager?.items, !items.isEmpty, !isDraggingSessionActive else { return }
+        guard !isDraggingSessionActive else { return }
 
         let currentScreenPoint = NSEvent.mouseLocation
         let dist = hypot(currentScreenPoint.x - dragStartScreenPoint.x, currentScreenPoint.y - dragStartScreenPoint.y)
 
         // When ⌥ is held (the only way to catch the pill), allow a generous 20pt
         // threshold so trackpad clicks and resting fingers don't start an accidental drag.
-        let isModifierHeld = event.modifierFlags.contains(.option)
+        let isModifierHeld = event.modifierFlags.contains(.option) || isTapSnapped
             || CGEventSource.flagsState(.hidSystemState).contains(.maskAlternate)
         let threshold: CGFloat = isModifierHeld ? 20.0 : 4.0
 
         guard dist > threshold else { return }
+        // Moving off turns a hold into a drag: no "add all".
+        if longPress == .waiting || longPress == .shaking { longPress = .cancelled }
+        guard let items = queueManager?.items, !items.isEmpty else { return }
 
         isDraggingSessionActive = true
         startDragSession(with: event, items: items)
@@ -455,8 +543,17 @@ public final class DeckHUDView: NSView, NSDraggingSource {
         // If a drag session was active, AppKit handles session end via draggingSession(_:endedAt:operation:)
         guard !isDraggingSessionActive else { return }
 
+        let press = longPress
+        if press == .waiting { longPress = .idle } else if press == .shaking { longPress = .cancelled }
+        // A hold that was recognised (already ran "add all"), dragged away, or let go mid-shake is not a click.
+        if press == .shaking || press == .fired || press == .cancelled {
+            clickHadOption = false
+            clickHadShift = false
+            return
+        }
+
         // A notice with actions (e.g. the board offer) answers the click instead of the deck: ⌥-click runs the
-        // first choice, ⌥⇧-click the other (or ⌥-click alone when the notice only has that one).
+        // first choice, ⌥-click and hold the other (⌥⇧-click still works too; ⌥-click alone when there's just one).
         if let notice = activeNotice, notice.hasActions {
             let wantsAlternate = clickHadShift || notice.primaryAction == nil
             let action = wantsAlternate ? notice.alternateAction : notice.primaryAction
@@ -481,6 +578,70 @@ public final class DeckHUDView: NSView, NSDraggingSource {
 
         // 2. Show green ✓ pop on pill
         showCopiedFeedback()
+    }
+
+    // MARK: - Click and hold: the alternate choice (adds a whole board)
+
+    /// `waiting`: pressed, still a plain click. `shaking`: past the threshold, Que trembles while it gets ready.
+    /// `fired`: the alternate ran (once). `cancelled`: let go early or dragged; the shake settles, nothing runs.
+    enum LongPress { case idle, waiting, shaking, fired, cancelled }
+    private var longPress: LongPress = .idle
+    static let longPressShakeAfter: TimeInterval = 0.3
+    static let longPressCommitAfter: TimeInterval = 0.8
+    private var longPressTimer: Timer?
+    private var longPressStart: TimeInterval = 0
+    private var lastTick: TimeInterval = 0
+    private var shakeAmplitude: CGFloat = 0   // 0...1
+    private var shakePhase: CGFloat = 0
+    private var shakeOffset: CGFloat = 0      // points currently added to the window's x
+
+    private func beginLongPress() {
+        longPress = .waiting
+        longPressStart = ProcessInfo.processInfo.systemUptime
+        lastTick = longPressStart
+        guard longPressTimer == nil else { return }   // still settling from a previous hold: keep its motion
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.longPressTick() }
+        RunLoop.main.add(timer, forMode: .common)
+        longPressTimer = timer
+    }
+
+    /// One clock drives both the gesture and the motion, so the shake can never outlive the hold.
+    private func longPressTick() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let held = now - longPressStart
+        let dt = CGFloat(min(now - lastTick, 0.05))
+        lastTick = now
+
+        if longPress == .waiting && held >= Self.longPressShakeAfter { longPress = .shaking }
+        if longPress == .shaking && held >= Self.longPressCommitAfter {
+            longPress = .fired
+            // The same notice check a click makes; a notice that changed under the finger runs nothing.
+            if let notice = activeNotice, notice.primaryAction != nil { notice.alternateAction?() }
+        }
+
+        // Weighted: builds slowly while held, then slows and fades out once recognised or let go.
+        if longPress == .shaking {
+            shakeAmplitude += (1 - shakeAmplitude) * min(1, dt * 7)
+        } else {
+            shakeAmplitude *= pow(0.02, dt / 0.35)   // ~0.35 s to settle
+        }
+        shakePhase += 2 * .pi * (4 + 4 * shakeAmplitude) * dt   // 8 Hz at full, slowing to 4 Hz as it settles
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let settled = longPress != .waiting && longPress != .shaking && shakeAmplitude < 0.03
+        let offset = (reduceMotion || settled) ? 0 : sin(shakePhase) * shakeAmplitude * 1.5
+        // Side to side only: the window is exactly the pill's size, so a tilt would clip its corners. Applied as a
+        // change, so it adds to wherever the panel puts Que and always ends exactly where it started.
+        if let window = window, offset != shakeOffset {
+            let base = window.frame.origin.x - shakeOffset
+            window.setFrameOrigin(NSPoint(x: base + offset, y: window.frame.origin.y))
+            shakeOffset = window.frame.origin.x - base   // macOS snaps windows to pixels: remember what really moved
+        }
+
+        if settled {
+            longPressTimer?.invalidate()
+            longPressTimer = nil
+            shakeAmplitude = 0   // `fired`/`cancelled` stay until the next press, so its mouse-up is still swallowed
+        }
     }
 
     private func startDragSession(with event: NSEvent, items: [DeckItem]) {

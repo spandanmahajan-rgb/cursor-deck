@@ -91,6 +91,11 @@ public final class PinterestMediaResolver {
             done(nil)
             return
         }
+        // Still inside a wait Pinterest asked for: don't ask again (it can make the wait longer).
+        if let wait = PinterestBoardResolver.remainingWait() {
+            done(.rateLimited(retryAfter: wait))
+            return
+        }
 
         if url.host?.lowercased() == "pin.it" {
             var req = URLRequest(url: url)
@@ -272,7 +277,8 @@ public final class PinterestMediaResolver {
         fallbackToImage(pinData: pinData, completion: completion)
     }
 
-    /// Direct MP4 if present, otherwise try to derive an MP4 from the HLS URL, otherwise use HLS.
+    /// Direct MP4 if present, otherwise try to derive an MP4 from the HLS URL, otherwise the stream's single-file
+    /// rendition, otherwise the HLS stream itself.
     private func resolveBestVideoStream(from streams: [String], completion: @escaping (URL?) -> Void) {
         for stream in streams where stream.contains(".mp4") {
             if let u = URL(string: stream) {
@@ -285,8 +291,12 @@ public final class PinterestMediaResolver {
             checkAvailableURLs(generateMP4Candidates(from: stream)) { validURL in
                 if let validURL = validURL {
                     completion(validURL)
+                } else if let master = URL(string: stream) {
+                    self.singleFileRendition(ofHLS: master) { file in
+                        completion(file ?? master)   // raw HLS -> VideoToGIFConverter.convertHLS
+                    }
                 } else {
-                    completion(URL(string: stream))   // raw HLS -> VideoToGIFConverter.convertHLS
+                    completion(nil)
                 }
             }
             return
@@ -354,6 +364,78 @@ public final class PinterestMediaResolver {
             lock.unlock()
             completion(firstValid)
         }
+    }
+
+    // MARK: - Stream-only pins
+
+    /// Newer pins are stream-only (no MP4 link), but each quality of the stream is usually ONE file: CMAF, a fragmented
+    /// MP4 that AVFoundation opens directly; the playlist only lists byte ranges inside it. Downloading that file
+    /// turns the GIF into a normal download (faster than recording 4 s in real time) and lets Que keep the video for
+    /// the GIF editor. nil (→ real-time recording, as before) when the stream is split into separate pieces.
+    private func singleFileRendition(ofHLS master: URL, completion: @escaping (URL?) -> Void) {
+        fetchPlaylist(master) { [weak self] text in
+            guard let self = self, let text = text,
+                  let variant = Self.bestVariant(inMasterPlaylist: text, base: master, targetWidth: self.targetWidth) else {
+                completion(nil); return
+            }
+            self.fetchPlaylist(variant) { text in
+                completion(text.flatMap { Self.singleMediaFile(inMediaPlaylist: $0, base: variant) })
+            }
+        }
+    }
+
+    private func fetchPlaylist(_ url: URL, completion: @escaping (String?) -> Void) {
+        var req = URLRequest(url: url)
+        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 8.0
+        session.dataTask(with: req) { data, response, _ in
+            guard let data = data, data.count < 512 * 1024,   // playlists are a few KB
+                  (response as? HTTPURLResponse).map({ (200...299).contains($0.statusCode) }) ?? false else {
+                completion(nil); return
+            }
+            completion(String(data: data, encoding: .utf8))
+        }.resume()
+    }
+
+    /// The smallest video rendition still >= `targetWidth` (the GIF's width), else the widest. Its playlist's URL.
+    public static func bestVariant(inMasterPlaylist text: String, base: URL, targetWidth: Int) -> URL? {
+        var variants: [(width: Int, uri: String)] = []
+        var pendingWidth: Int?
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("#EXT-X-STREAM-INF:") {
+                pendingWidth = line.range(of: #"RESOLUTION=(\d+)x\d+"#, options: .regularExpression)
+                    .flatMap { Int(line[$0].dropFirst("RESOLUTION=".count).prefix { $0.isNumber }) } ?? 0
+            } else if let width = pendingWidth, !line.isEmpty, !line.hasPrefix("#") {
+                variants.append((width, line))
+                pendingWidth = nil
+            }
+        }
+        let pick = variants.filter { $0.width >= targetWidth }.min { $0.width < $1.width } ?? variants.max { $0.width < $1.width }
+        return pick.flatMap { URL(string: $0.uri, relativeTo: base)?.absoluteURL }
+    }
+
+    /// The one file every segment (and the init section) of a media playlist points into, or nil when the segments
+    /// are separate files, encrypted, or the file is over `maxBytes` (a long video: downloading all of it for a 4 s GIF
+    /// could time out, where recording the stream takes 4 s whatever its length).
+    public static func singleMediaFile(inMediaPlaylist text: String, base: URL, maxBytes: Int = 40 * 1024 * 1024) -> URL? {
+        guard text.hasPrefix("#EXTM3U"), !text.contains("#EXT-X-KEY:METHOD=AES"), !text.contains("#EXT-X-KEY:METHOD=SAMPLE-AES") else { return nil }
+        var files = Set<String>()
+        var bytes = 0
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            // "#EXT-X-BYTERANGE:153621@1102" and BYTERANGE="978@0" (on the init section): length@offset.
+            if let r = line.range(of: #"BYTERANGE[:=]"?(\d+)"#, options: .regularExpression) {
+                bytes += Int(line[r].filter(\.isNumber)) ?? 0
+            }
+            if line.hasPrefix("#EXT-X-MAP:"), let r = line.range(of: #"URI="[^"]+""#, options: .regularExpression) {
+                files.insert(String(line[r].dropFirst(5).dropLast()))
+            } else if !line.isEmpty, !line.hasPrefix("#") {
+                files.insert(line)
+            }
+        }
+        guard files.count == 1, bytes <= maxBytes, let only = files.first else { return nil }
+        return URL(string: only, relativeTo: base)?.absoluteURL
     }
 
     // MARK: - HTML fallback

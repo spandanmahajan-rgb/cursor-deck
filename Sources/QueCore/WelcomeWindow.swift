@@ -14,6 +14,9 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
     static let lastCopyKey = "Que_lastLaunchedCopy"
     /// Written by Que's updater just before it swaps in a new version, so that launch doesn't count as an install.
     public static let updateInProgressKey = "Que_updateInProgress"
+    /// Set once the welcome with the "How should Que come to you?" choice has been shown. People who installed before
+    /// that choice existed see the welcome once after updating, so they get to pick too.
+    static let callChoiceShownKey = "Que_callChoiceShown"
 
     /// Window content width in points; the height follows the content.
     static let width: CGFloat = 380
@@ -30,14 +33,17 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
         return number.stringValue
     }
 
-    /// Call once at launch. True when this copy was just installed by hand (new or returning user); false for normal
-    /// launches and for the first launch after an in-app update. Records the copy and clears the update note.
+    /// Call once at launch. True when this copy was just installed by hand (new or returning user), or on the first
+    /// update since the call-over choice was added; false for normal launches and other in-app updates. Records the
+    /// copy and clears the update note.
     public static func shouldShowWelcome(copyID: String?, defaults: UserDefaults = .standard) -> Bool {
         let wasUpdate = defaults.object(forKey: updateInProgressKey) != nil
         defaults.removeObject(forKey: updateInProgressKey)
         guard let copyID = copyID, copyID != defaults.string(forKey: lastCopyKey) else { return false }
         defaults.set(copyID, forKey: lastCopyKey)
-        return !wasUpdate
+        let hasSeenChoice = defaults.bool(forKey: callChoiceShownKey)
+        defaults.set(true, forKey: callChoiceShownKey)
+        return !wasUpdate || !hasSeenChoice
     }
 
     public func show() {
@@ -95,7 +101,8 @@ public final class WelcomeWindowController: NSObject, NSWindowDelegate {
 
 // MARK: - Welcome + tour
 
-/// Page 0 is the welcome; "Start Queing" walks through a short tour of the core moves, ending in the menu bar.
+/// Page 0 is the welcome; "Start Queing" walks through a short tour: copy, choose how Que comes to you, practise the
+/// moves with the real keys, then the menu bar.
 struct WelcomeView: View {
     var onStart: () -> Void            // closes the window (close button / finished)
     var onOpenQue: () -> Void = {}     // last page: close and open the menu bar panel
@@ -105,6 +112,17 @@ struct WelcomeView: View {
     /// The logo animation plays once per window; coming back to this page shows the finished logo and text.
     @State private var introPlayed = false
     @State private var textVisible = false
+    /// How Que comes to the user (QueControls); the tour only ever shows this way.
+    @State private var usesDoubleTap = QueControls.usesDoubleTap
+    @StateObject private var practice = TourPractice()
+    @State private var practiced: Set<TourPage> = []
+    @State private var hintPage: TourPage?
+    @State private var dragOffset: CGSize = .zero
+    @State private var isDraggingBadge = false
+    @State private var isOverSlide = false
+    @State private var landed = false
+    @State private var gridOpen = false
+    @State private var shaken = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(onStart: @escaping () -> Void, onOpenQue: @escaping () -> Void = {}, initialPage: Int = 0) {
@@ -114,7 +132,6 @@ struct WelcomeView: View {
     }
 
     static let height: CGFloat = 410
-    private static let tourCount = 6   // pages 1...6
 
     private var animation: Animation {
         reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.86)
@@ -142,6 +159,17 @@ struct WelcomeView: View {
         .overlay(alignment: .bottom) { if page > 0 { tourNav(page) } }
         .clipped()
         .background(keyboardShortcuts)
+        .onAppear { practice.start() }
+        .onDisappear { practice.stop() }
+        .onChange(of: page) { practice.watchesShake = $0 == TourPage.shake.rawValue }
+        .onChange(of: practice.isCatching) { caught in
+            if caught && page == TourPage.callOver.rawValue { practiced.insert(.callOver) }
+        }
+        .onChange(of: practice.shakes) { _ in
+            guard page == TourPage.shake.rawValue, !shaken else { return }
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.7)) { shaken = true }
+            practiced.insert(.shake)
+        }
     }
 
     /// ← / → move between tour pages (hidden buttons: keyboard shortcuts without onKeyPress, which needs macOS 14).
@@ -194,36 +222,32 @@ struct WelcomeView: View {
 
     // MARK: Tour
 
-    private struct Step {
-        let title: String
-        let body: String
+    /// The tour after the welcome. The user picks how Que comes to them, then practises with the real keys and
+    /// pointer on a little desk (the real badge isn't involved: Que is usually empty on a fresh install).
+    enum TourPage: Int, CaseIterable {
+        case copy = 1, choose, callOver, drag, closerLook, shake, menuBar
+    }
+    static let tourCount = TourPage.allCases.count
+
+    @ViewBuilder
+    private func tourPage(_ index: Int) -> some View {
+        let p = TourPage(rawValue: index) ?? .copy
+        if p == .choose { choosePage } else { standardPage(p) }
     }
 
-    private static let steps: [Step] = [
-        Step(title: "Copy what catches your eye", body: "Every image you copy joins Que, the little badge that follows your pointer."),
-        Step(title: "Hold ⌥ to call Que over", body: "It scoots right under your pointer, ready to go."),
-        Step(title: "Drag, then let go", body: "Drop Que on a slide or canvas and everything lands at once."),
-        Step(title: "⌥-click for a closer look", body: "See what's in Que, pick a few, or clear some out."),
-        Step(title: "Shake to start fresh", body: "A quick wiggle of the pointer empties Que."),
-        Step(title: "Que lives up here", body: "Click the Que icon in your menu bar for switches, tips and everything else."),
-    ]
-
-    private func tourPage(_ index: Int) -> some View {
-        let step = Self.steps[index - 1]
-        let isLast = index == Self.tourCount
-        return VStack(spacing: 0) {
-            illustration(index)
+    private func standardPage(_ p: TourPage) -> some View {
+        VStack(spacing: 0) {
+            stage(p)
                 .frame(height: 150)
                 .padding(.top, 40)
-                .accessibilityHidden(true)
 
-            Text(step.title)
+            Text(title(p))
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
                 .padding(.top, 18)
                 .padding(.horizontal, 32)
 
-            Text(step.body)
+            Text(instruction(p))
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -231,7 +255,9 @@ struct WelcomeView: View {
                 .padding(.top, 6)
                 .padding(.horizontal, 44)
 
-            if isLast {
+            if isPractice(p) { practiceStatus(p).padding(.top, 10) }
+
+            if p == .menuBar {
                 HStack {
                     Text("Open Que when you log in").font(.callout)
                     Spacer()
@@ -252,6 +278,324 @@ struct WelcomeView: View {
 
             Spacer()
         }
+    }
+
+    private func isPractice(_ p: TourPage) -> Bool { [.callOver, .drag, .closerLook, .shake].contains(p) }
+
+    // MARK: Copy (describes only the chosen way)
+
+    private func title(_ p: TourPage) -> String {
+        switch p {
+        case .copy: return "Copy what catches your eye"
+        case .choose: return "How should Que come to you?"
+        case .callOver: return usesDoubleTap ? "Tap the Control key twice" : "Hold the Option key"
+        case .drag: return "Drag, then let go"
+        case .closerLook: return usesDoubleTap ? "Click for a closer look" : "Option-click for a closer look"
+        case .shake: return "Shake to start fresh"
+        case .menuBar: return "Que lives up here"
+        }
+    }
+
+    private func instruction(_ p: TourPage) -> String {
+        switch p {
+        case .copy: return "Every image you copy joins Que, the little badge that follows your pointer."
+        case .choose: return ""
+        case .callOver: return usesDoubleTap ? "Try it: tap the Control key (⌃) twice, quickly. Que moves under your pointer."
+                                             : "Try it: hold the Option key (⌥). Que moves under your pointer."
+        case .drag: return usesDoubleTap ? "Try it: tap the Control key twice, then drag Que onto the slide."
+                                         : "Try it: hold the Option key and drag Que onto the slide."
+        case .closerLook: return usesDoubleTap ? "Try it: tap the Control key twice, then click Que."
+                                               : "Try it: hold the Option key and click Que."
+        case .shake: return "Try it: shake the pointer quickly from side to side."
+        case .menuBar: return "Click the Que icon in your menu bar for switches, tips and everything else."
+        }
+    }
+
+    private func success(_ p: TourPage) -> String {
+        switch p {
+        case .callOver: return usesDoubleTap ? "That's it. Tap the Control key twice again to send it back." : "That's it. Let go and it moves aside."
+        case .drag: return "Everything landed at once."
+        case .closerLook: return "Pick a few, drag them out, or clear some out."
+        default: return "Que is empty again."
+        }
+    }
+
+    private var keyHint: String { usesDoubleTap ? "Tap the Control key twice first." : "Hold the Option key while you do it." }
+
+    /// One line under the instruction: a check once the move worked, a nudge if the key was missing. Fixed height,
+    /// so nothing jumps when it changes.
+    private func practiceStatus(_ p: TourPage) -> some View {
+        Group {
+            if practiced.contains(p) {
+                Label(success(p), systemImage: "checkmark.circle.fill")
+                    .foregroundColor(.primary)
+                    .labelStyle(SuccessLabelStyle())
+            } else if hintPage == p {
+                Text(keyHint).foregroundColor(.secondary)
+            } else {
+                Text(" ")
+            }
+        }
+        .font(.callout.weight(.medium))
+        .frame(height: 20)
+        .padding(.horizontal, 32)
+        .animation(.easeOut(duration: 0.15), value: practiced)
+        .animation(.easeOut(duration: 0.15), value: hintPage)
+        .accessibilityElement(children: .combine)
+    }
+
+    private struct SuccessLabelStyle: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            HStack(spacing: 6) {
+                configuration.icon.foregroundColor(.green)
+                configuration.title
+            }
+        }
+    }
+
+    private func nudge(_ p: TourPage) {
+        hintPage = p
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { if hintPage == p { hintPage = nil } }
+    }
+
+    // MARK: Choose
+
+    private var choosePage: some View {
+        VStack(spacing: 0) {
+            Text("How should Que come to you?")
+                .font(.title2.weight(.bold))
+                .multilineTextAlignment(.center)
+                .padding(.top, 48)
+
+            VStack(spacing: 10) {
+                choiceCard(doubleTap: false, keys: "⌥", title: "Hold the Option key",
+                           line: "A smooth way to use Que, though it can sit over the app you're in.")
+                choiceCard(doubleTap: true, keys: "⌃⌃", title: "Tap the Control key twice",
+                           line: "Que stays away from the apps underneath.")
+            }
+            .padding(.top, 20)
+            .padding(.horizontal, 28)
+
+            Text("You can switch anytime in the menu bar.")
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .padding(.top, 14)
+
+            Spacer()
+        }
+    }
+
+    private func choiceCard(doubleTap: Bool, keys: String, title: String, line: String) -> some View {
+        let isChosen = usesDoubleTap == doubleTap
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return Button(action: { choose(doubleTap: doubleTap) }) {
+            HStack(alignment: .center, spacing: 12) {
+                KeycapBadgeView(keys).scaleEffect(1.4).frame(width: 46)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline).foregroundColor(.primary)
+                    Text(line)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: isChosen ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(isChosen ? .accentColor : Color.primary.opacity(0.25))
+            }
+            .padding(12)
+            .background(shape.fill(isChosen ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.035)))
+            .overlay(shape.strokeBorder(isChosen ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: isChosen ? 1.5 : 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(line)
+        .accessibilityAddTraits(isChosen ? .isSelected : [])
+    }
+
+    /// Saves the choice right away (closing the window mid-tour keeps it) and resets the practice for the new way.
+    private func choose(doubleTap: Bool) {
+        guard doubleTap != usesDoubleTap else { return }
+        withAnimation(.easeOut(duration: 0.15)) { usesDoubleTap = doubleTap }
+        QueControls.usesDoubleTap = doubleTap
+        practice.usesDoubleTap = doubleTap
+        practiced = []
+        landed = false
+        gridOpen = false
+        shaken = false
+    }
+
+    // MARK: Practice desks
+
+    @ViewBuilder
+    private func stage(_ p: TourPage) -> some View {
+        switch p {
+        case .copy:
+            VStack(spacing: 18) {
+                bigKeys("⌘ C")
+                Image(systemName: "arrow.down").font(.title3.weight(.semibold)).foregroundColor(.secondary)
+                QueBadgeMock(count: 3)
+            }
+            .accessibilityHidden(true)
+        case .callOver: desk { callOverDesk }
+        case .drag: desk { dragDesk }
+        case .closerLook: desk { closerLookDesk }
+        case .shake: desk { shakeDesk }
+        default:
+            // A sliver of menu bar with the Que icon picked out.
+            HStack(spacing: 18) {
+                Image(systemName: "wifi").foregroundColor(.secondary)
+                Image(nsImage: QueLogoAsset.menuBarImage)
+                    .renderingMode(.template)
+                    .foregroundColor(.primary)
+                    .padding(6)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.12)))
+                Image(systemName: "battery.75").foregroundColor(.secondary)   // "battery.75percent" needs macOS 14
+                Text("9:41").font(.callout.weight(.medium)).foregroundColor(.secondary)
+            }
+            .font(.body)
+            .padding(.horizontal, 18)
+            .frame(height: 36)
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+            .accessibilityHidden(true)
+        }
+    }
+
+    private static let deskSize = CGSize(width: 300, height: 150)
+
+    /// The practice surface: a quiet tray the moves happen on. Coordinates inside are top-left based ("desk").
+    private func desk<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return ZStack(alignment: .topLeading) { content() }
+            .frame(width: Self.deskSize.width, height: Self.deskSize.height, alignment: .topLeading)
+            .background(shape.fill(Color.primary.opacity(0.04)))
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+            .clipShape(shape)
+            .coordinateSpace(name: "desk")
+            .accessibilityElement()
+            .accessibilityLabel("Practice area")
+    }
+
+    private var snapAnimation: Animation? { reduceMotion ? nil : .spring(response: 0.2, dampingFraction: 0.86) }
+    private var badgeShines: Bool { usesDoubleTap && practice.isCatching }
+
+    /// Que follows beside a pointer; calling it over pulls it under the pointer, the way the real badge snaps.
+    private var callOverDesk: some View {
+        let tip = CGPoint(x: 112, y: 58)
+        let caught = practice.isCatching
+        return ZStack(alignment: .topLeading) {
+            QueBadgeMock(count: 3, shining: badgeShines)
+                .offset(caught ? CGSize(width: tip.x - 22, height: tip.y - 17)    // pointer over its left part
+                               : CGSize(width: tip.x + 22, height: tip.y + 12))   // beside the pointer, as it follows
+                .animation(snapAnimation, value: caught)
+            pointerGlyph.offset(x: tip.x - 5, y: tip.y - 4)
+        }
+    }
+
+    private var pointerGlyph: some View {
+        Image(systemName: "cursorarrow")
+            .font(.system(size: 22, weight: .regular))
+            .foregroundColor(.primary)
+            .shadow(color: .black.opacity(0.2), radius: 1, y: 1)
+    }
+
+    private static let slideFrame = CGRect(x: 172, y: 32, width: 104, height: 86)
+    private static let dragHome = CGPoint(x: 34, y: 58)
+
+    /// Drag the badge onto the slide. It only moves while Que is called over, like the real one.
+    private var dragDesk: some View {
+        let slide = Self.slideFrame
+        return ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(isOverSlide ? 0.5 : 0.18), lineWidth: isOverSlide ? 2 : 1))
+                .overlay(landedImages)
+                .frame(width: slide.width, height: slide.height)
+                .offset(x: slide.minX, y: slide.minY)
+
+            if !landed {
+                QueBadgeMock(count: 3, shining: badgeShines)
+                    .offset(x: Self.dragHome.x + dragOffset.width, y: Self.dragHome.y + dragOffset.height)
+                    .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("desk"))
+                        .onChanged { value in
+                            if !isDraggingBadge {
+                                guard practice.isCatching else { nudge(.drag); return }
+                                isDraggingBadge = true
+                            }
+                            dragOffset = value.translation
+                            isOverSlide = slide.contains(value.location)
+                        }
+                        .onEnded { value in
+                            guard isDraggingBadge else { return }
+                            isDraggingBadge = false
+                            isOverSlide = false
+                            if slide.contains(value.location) {
+                                withAnimation(.easeOut(duration: 0.2)) { landed = true }
+                                dragOffset = .zero
+                                practiced.insert(.drag)
+                                practice.release()   // a drop sends Que back, as in the real thing
+                            } else {
+                                withAnimation(snapAnimation ?? .easeOut(duration: 0.1)) { dragOffset = .zero }
+                            }
+                        })
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private var landedImages: some View {
+        HStack(spacing: 5) {
+            ForEach(0..<3) { i in
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.35 + 0.15 * Double(i)))
+                    .frame(width: 24, height: 24)
+            }
+        }
+        .opacity(landed ? 1 : 0)
+        .scaleEffect(landed || reduceMotion ? 1 : 0.7)
+    }
+
+    /// Click the badge while it's called over: the grid opens out of it. Click the grid to close it.
+    private var closerLookDesk: some View {
+        ZStack {
+            if gridOpen {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 4), spacing: 6) {
+                    ForEach(0..<8) { i in
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Color.primary.opacity(0.12))
+                            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .strokeBorder(Color.accentColor, lineWidth: [1, 2, 5].contains(i) ? 2 : 0))
+                            .frame(width: 30, height: 30)
+                    }
+                }
+                .frame(width: 30 * 4 + 6 * 3)
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(snapAnimation) { gridOpen = false } }
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
+            } else {
+                QueBadgeMock(count: 8, shining: badgeShines)
+                    .onTapGesture {
+                        guard practice.isCatching else { nudge(.closerLook); return }
+                        withAnimation(snapAnimation ?? .easeOut(duration: 0.15)) { gridOpen = true }
+                        practiced.insert(.closerLook)
+                    }
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: Self.deskSize.width, height: Self.deskSize.height)
+    }
+
+    /// Shake the pointer (anywhere on screen, as with the real badge) and Que empties.
+    private var shakeDesk: some View {
+        ZStack {
+            if !shaken {
+                QueBadgeMock(count: 3)
+                    .transition(reduceMotion ? .opacity : .scale(scale: 0.3).combined(with: .opacity))
+            }
+        }
+        .frame(width: Self.deskSize.width, height: Self.deskSize.height)
     }
 
     /// Dots, Back and Next live outside the sliding page, so only the illustration and text move.
@@ -308,96 +652,63 @@ struct WelcomeView: View {
         .accessibilityLabel("Page \(current) of \(Self.tourCount)")
     }
 
-    // MARK: Illustrations (built from the real badge and keycaps, so they look like Que itself)
-
-    @ViewBuilder
-    private func illustration(_ index: Int) -> some View {
-        switch index {
-        case 1:
-            VStack(spacing: 18) {
-                bigKeys("⌘ C")
-                Image(systemName: "arrow.down").font(.title3.weight(.semibold)).foregroundColor(.secondary)
-                QueBadgeMock(count: 3)
-            }
-        case 2:
-            VStack(spacing: 14) {
-                bigKeys("⌥")
-                // The pointer sits just above the badge's left end, the way Que snaps under it.
-                ZStack(alignment: .topLeading) {
-                    QueBadgeMock(count: 3)
-                        .padding(.top, 14)
-                        .padding(.leading, 10)
-                    Image(systemName: "cursorarrow")
-                        .font(.system(size: 22, weight: .regular))
-                }
-            }
-        case 3:
-            VStack(spacing: 16) {
-                bigKeys("⌥ + Drag")
-                HStack(spacing: 14) {
-                    QueBadgeMock(count: 3)
-                    Image(systemName: "arrow.right").font(.title3.weight(.semibold)).foregroundColor(.secondary)
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.25), lineWidth: 1.5)
-                        .frame(width: 78, height: 50)
-                        .overlay(HStack(spacing: 4) {
-                            ForEach(0..<3) { _ in
-                                RoundedRectangle(cornerRadius: 2).fill(Color.accentColor.opacity(0.55)).frame(width: 16, height: 16)
-                            }
-                        })
-                }
-            }
-        case 4:
-            VStack(spacing: 16) {
-                bigKeys("⌥ + Click")
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 4), spacing: 6) {
-                    ForEach(0..<8) { i in
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(Color.primary.opacity(0.12))
-                            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .strokeBorder(Color.accentColor, lineWidth: [1, 2, 5].contains(i) ? 2 : 0))
-                            .frame(width: 30, height: 30)
-                    }
-                }
-                .frame(width: 30 * 4 + 6 * 3)
-            }
-        case 5:
-            // Where Que really sits: just below and to the right of the pointer's tip (as on page 2).
-            ZStack(alignment: .topLeading) {
-                QueBadgeMock(count: 3)
-                    .padding(.top, 30)
-                    .padding(.leading, 20)
-                Image(systemName: QueSymbol.shake)
-                    .font(.system(size: 36, weight: .regular))
-                    .foregroundColor(.primary.opacity(0.85))
-            }
-        default:
-            // A sliver of menu bar with the Que icon picked out.
-            HStack(spacing: 18) {
-                Image(systemName: "wifi").foregroundColor(.secondary)
-                Image(nsImage: QueLogoAsset.menuBarImage)
-                    .renderingMode(.template)
-                    .foregroundColor(.primary)
-                    .padding(6)
-                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.12)))
-                Image(systemName: "battery.75").foregroundColor(.secondary)   // "battery.75percent" needs macOS 14
-                Text("9:41").font(.callout.weight(.medium)).foregroundColor(.secondary)
-            }
-            .font(.body)
-            .padding(.horizontal, 18)
-            .frame(height: 36)
-            .background(Capsule().fill(Color.primary.opacity(0.06)))
-        }
-    }
-
     private func bigKeys(_ badge: String) -> some View {
         KeycapBadgeView(badge).scaleEffect(1.7).frame(height: 30)
     }
 }
 
-/// A static copy of the Que badge (dark glass capsule, green dot, count) for the tour illustrations.
+/// Watches the real keys and pointer for the tour's practice pages, the same permission-free way the badge does:
+/// polled ⌥ (or ⌃⌃ via ControlDoubleTap), and pointer shakes. Runs while the welcome window is open.
+final class TourPractice: ObservableObject {
+    @Published private(set) var isCatching = false
+    @Published private(set) var shakes = 0
+    var usesDoubleTap = QueControls.usesDoubleTap { didSet { release() } }
+    var watchesShake = false
+
+    private var tapSnapped = false
+    private var doubleTap = ControlDoubleTap()
+    private let shakeDetector = ShakeDetector()
+    private var timer: Timer?
+
+    func start() {
+        guard timer == nil else { return }
+        shakeDetector.onShakeDetected = { [weak self] in self?.shakes += 1 }
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    deinit { timer?.invalidate() }
+
+    /// After a drop: Que goes back beside the pointer (⌃⌃ mode).
+    func release() {
+        tapSnapped = false
+        if isCatching { isCatching = false }
+    }
+
+    private func tick() {
+        let caught: Bool
+        if usesDoubleTap {
+            if doubleTap.poll() { tapSnapped.toggle() }
+            caught = tapSnapped
+        } else {
+            caught = CGEventSource.flagsState(.hidSystemState).contains(.maskAlternate)
+        }
+        if caught != isCatching { isCatching = caught }
+        if watchesShake { shakeDetector.observe(x: NSEvent.mouseLocation.x) }
+    }
+}
+
+/// A static copy of the Que badge (dark glass capsule, green dot, count) for the tour. `shining`: the light that
+/// runs around the real badge's rim while it's called over with ⌃⌃.
 struct QueBadgeMock: View {
     let count: Int
+    var shining = false
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(Color(red: 0.20, green: 0.85, blue: 0.40)).frame(width: 7, height: 7)
@@ -407,6 +718,37 @@ struct QueBadgeMock: View {
         .frame(height: 34)
         .background(Capsule().fill(Color(white: 0.12)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+        .overlay(Group { if shining { RimLight() } })
         .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
+    }
+}
+
+/// The badge's rim light in SwiftUI: a short bright stroke with a glow, one lap every 2.4 s (as `DeckHUDView`).
+/// Reduce Motion: the whole rim brightens instead.
+struct RimLight: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let lap: Double = 2.4
+    private static let length: CGFloat = 0.11
+
+    var body: some View {
+        if reduceMotion {
+            Capsule().strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5)
+        } else {
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let phase = CGFloat(t.truncatingRemainder(dividingBy: Self.lap) / Self.lap)
+                let end = phase + Self.length
+                ZStack {
+                    segment(from: phase, to: min(end, 1))
+                    if end > 1 { segment(from: 0, to: end - 1) }   // wraps past the path's start
+                }
+                .shadow(color: .white.opacity(0.9), radius: 3)
+            }
+        }
+    }
+
+    private func segment(from: CGFloat, to: CGFloat) -> some View {
+        Capsule().inset(by: 0.75).trim(from: from, to: to)
+            .stroke(Color.white.opacity(0.95), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
     }
 }

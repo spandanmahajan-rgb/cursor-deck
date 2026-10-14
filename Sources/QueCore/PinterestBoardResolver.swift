@@ -197,6 +197,10 @@ public final class PinterestBoardResolver {
     /// (`resource_response` holds the data; `resource` echoes the options, including paging bookmarks).
     private func request(_ resource: String, sourcePath: String, options: [String: Any],
                          completion: @escaping (Result<[String: Any], PinterestError>) -> Void) {
+        if let wait = Self.remainingWait() {
+            completion(.failure(.rateLimited(retryAfter: wait)))
+            return
+        }
         var components = URLComponents(string: "https://www.pinterest.com/resource/\(resource)/get/")!
         guard let json = try? JSONSerialization.data(withJSONObject: ["options": options, "context": [String: Any]()]),
               let jsonString = String(data: json, encoding: .utf8) else {
@@ -241,7 +245,33 @@ public final class PinterestBoardResolver {
 
     public struct RateLimit { public let retryAfter: TimeInterval? }
 
+    /// Until when Pinterest asked Que to wait. While it lasts, Pinterest lookups answer "limited" without asking
+    /// Pinterest: every request during the wait counts against the limit and can make the wait longer.
+    private static var limitedUntil: Date?
+    private static let limitLock = NSLock()
+    /// Used when Pinterest doesn't say how long to wait.
+    static let defaultWait: TimeInterval = 5 * 60
+
+    public static func rememberLimit(retryAfter: TimeInterval?, now: Date = Date()) {
+        let until = now.addingTimeInterval(retryAfter.flatMap { $0 > 0 ? $0 : nil } ?? defaultWait)
+        limitLock.lock(); defer { limitLock.unlock() }
+        if limitedUntil.map({ until > $0 }) ?? true { limitedUntil = until }
+    }
+
+    /// Seconds left before Que may ask Pinterest again, or nil when it may ask now.
+    public static func remainingWait(now: Date = Date()) -> TimeInterval? {
+        limitLock.lock(); defer { limitLock.unlock() }
+        guard let until = limitedUntil, until > now else { limitedUntil = nil; return nil }
+        return until.timeIntervalSince(now)
+    }
+
+    public static func forgetLimit() {
+        limitLock.lock(); defer { limitLock.unlock() }
+        limitedUntil = nil
+    }
+
     /// Non-nil when Pinterest answered "too many requests" (HTTP 429, either as the status or inside the JSON body).
+    /// Also remembers the wait (see `limitedUntil`), so every Pinterest request site shares it.
     static func rateLimit(in response: URLResponse?, data: Data? = nil) -> RateLimit? {
         let http = response as? HTTPURLResponse
         var limited = http?.statusCode == 429
@@ -250,7 +280,9 @@ public final class PinterestBoardResolver {
             limited = bodyStatus(body["resource_response"] as? [String: Any]) == 429
         }
         guard limited else { return nil }
-        return RateLimit(retryAfter: retryAfterSeconds(http?.value(forHTTPHeaderField: "Retry-After")))
+        let retryAfter = retryAfterSeconds(http?.value(forHTTPHeaderField: "Retry-After"))
+        rememberLimit(retryAfter: retryAfter)
+        return RateLimit(retryAfter: retryAfter)
     }
 
     private static func bodyStatus(_ resourceResponse: [String: Any]?) -> Int? {

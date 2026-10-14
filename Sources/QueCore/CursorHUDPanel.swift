@@ -14,6 +14,25 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
     private var trackingTimer: Timer?
     private var previousCount: Int = 0
     private var wasMagnetHeld = false
+
+    /// "Tap ⌃ twice" (see QueControls): ⌃⌃ snaps the pill under the pointer until ⌃⌃ again or a drop; ⌥ then no
+    /// longer snaps, so ⌥-drag duplicates in other apps.
+    private var isDoubleTapMode: Bool { QueControls.usesDoubleTap }
+    private var controlDoubleTap = ControlDoubleTap()
+    public var isTapSnapped = false {   // public so tests can set it without two real ⌃ taps
+        didSet { if isTapSnapped != oldValue { hudView.isTapSnapped = isTapSnapped } }
+    }
+
+    /// The user is catching the pill: ⌥ held, or snapped by ⌃⌃ in double-tap mode.
+    private var isCatching: Bool {
+        isDoubleTapMode ? isTapSnapped : CGEventSource.flagsState(.hidSystemState).contains(.maskAlternate)
+    }
+
+    private func pollDoubleTap() {
+        guard isDoubleTapMode else { isTapSnapped = false; return }
+        if controlDoubleTap.poll() && !isTrackingPaused { isTapSnapped.toggle() }
+    }
+
     private var isDragging = false
     private var isDismissing = false
 
@@ -72,6 +91,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
             guard isTrackingPaused != oldValue else { return }
             applyMousePassThrough()
             hudView.isPaused = isTrackingPaused   // orange dot while paused
+            if isTrackingPaused { isTapSnapped = false }
             if isTrackingPaused && previewPanel.isVisible { previewPanel.close() }
         }
     }
@@ -269,8 +289,10 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
     private func updatePosition() {
         if scrollPassThroughUntil != nil { applyMousePassThrough() }   // restore clicks once the wheel is quiet
+        pollDoubleTap()
         // Hide only when there is nothing to show (empty deck, no notice) and no drag is in flight
         guard isActive else {
+            isTapSnapped = false
             if isVisible && !isDragging { orderOut(nil) }
             return
         }
@@ -285,17 +307,9 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
         // ⌥ pulls the pill under the pointer like a magnet: ⌥ + drag = burst-drop, ⌥ + click = open preview grid.
         // (⌘ used to as well; dropped so ⌘-click in browsers and design apps never lands on the pill.)
-        let heldFlags = CGEventSource.flagsState(.hidSystemState)
         // Paused: the pill only follows; ⌥ no longer pulls it under the pointer.
-        let isMagnetHeld = !isTrackingPaused && heldFlags.contains(.maskAlternate)
+        let isMagnetHeld = !isTrackingPaused && isCatching
 
-        // Freeze while a click on the pill itself is held, so clicks don't jitter. A press anywhere else (selecting
-        // text, dragging a window or a file) keeps it following, so it never sits frozen in the way.
-        if NSEvent.pressedMouseButtons != 0 && (hudView.isPressed || isMagnetHeld) {
-            return
-        }
-
-        let mousePos = NSEvent.mouseLocation
         let currentOrigin = frame.origin
 
         // Grow/shrink smoothly towards the target size (notice text or count), riding the same 60fps loop
@@ -317,6 +331,16 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         currentH = currentH.rounded()
         // Only force a redraw when the size actually changes; moving alone needs no redraw.
         let sizeChanged = currentW != frame.width || currentH != frame.height
+
+        // Freeze while a click on the pill itself is held, so clicks don't jitter. A press anywhere else (selecting
+        // text, dragging a window or a file) keeps it following, so it never sits frozen in the way.
+        // It still grows in place, so a notice that changes under the finger (click and hold) isn't cut off.
+        if NSEvent.pressedMouseButtons != 0 && (hudView.isPressed || isMagnetHeld) {
+            if sizeChanged { setFrame(NSRect(x: currentOrigin.x, y: currentOrigin.y, width: currentW, height: currentH), display: true) }
+            return
+        }
+
+        let mousePos = NSEvent.mouseLocation
 
         // Feed horizontal movement into ShakeDetector to detect rapid cursor shake
         if !isTrackingPaused { shakeDetector.observe(x: mousePos.x) }
@@ -390,7 +414,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
         hudView.updateCount(count, animateGlow: hasNewItems)
 
-        if isActive { startTracking() } else { stopTracking() }
+        if isActive { startTracking() } else { isTapSnapped = false; stopTracking() }   // the tick that resets it stops with the timer
 
         // Size changes animate in updatePosition(). When appearing for a notice, start as the dot and fade in,
         // so the message grows out of it from the left; otherwise appear at full size as before.
@@ -485,7 +509,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self, self.noticeToken == token else { return }
             // Don't pull the notice away while the user is holding ⌥ to catch the pill.
-            if CGEventSource.flagsState(.hidSystemState).contains(.maskAlternate) {
+            if self.isCatching {
                 self.scheduleNoticeEnd(after: 1.0, token: token)
                 return
             }
@@ -505,6 +529,7 @@ public final class CursorHUDPanel: NSPanel, DeckHUDViewDelegate {
 
     public func deckHUDViewDidCompleteDrop(_ view: DeckHUDView) {
         isDragging = false
+        isTapSnapped = false
         queueManager.clear()
     }
 

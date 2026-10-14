@@ -30,11 +30,11 @@ public struct PillNotice {
     public let detail: String?
     public let tone: Tone
     /// Seconds before the notice leaves on its own; `nil` keeps it until it is replaced or dismissed.
-    /// The timer pauses while ⌥ is held, so a notice can't vanish while you're reaching for it.
+    /// The timer pauses while ⌥ is held (or Que is snapped by ⌃⌃), so a notice can't vanish while you're reaching for it.
     public let duration: TimeInterval?
     /// Runs on ⌥-click on the pill while the notice is showing.
     public let primaryAction: (() -> Void)?
-    /// Runs on ⌥⇧-click on the pill while the notice is showing (or ⌥-click when there's no primary action).
+    /// Runs on ⌥-click and hold on the pill while the notice is showing (or ⌥-click when there's no primary action).
     public let alternateAction: (() -> Void)?
 
     public init(
@@ -108,9 +108,9 @@ public extension PillNotice {
     static func boardOffer(name: String, pinCount: Int, cap: Int,
                            addAll: @escaping () -> Void, choose: @escaping () -> Void) -> PillNotice {
         let pins = pinCount == 1 ? "1 pin" : "\(pinCount) pins"
-        let addHint = pinCount > cap ? "⌥⇧-click adds the first \(cap)" : "⌥⇧-click adds all"
-        // ⌥-click opens the picker, like ⌥-click opens the preview of what's in Que; ⌥⇧-click adds the batch.
-        return PillNotice("\(pins) in “\(name)”", detail: "⌥-click to choose, \(addHint)",
+        let addHint = pinCount > cap ? "hold to add the first \(cap)" : "hold to add all"
+        // ⌥-click opens the picker, like ⌥-click opens the preview of what's in Que; holding the click adds the batch.
+        return PillNotice("\(pins) in “\(name)”", detail: "\(QueControls.clickPhrase) to choose, \(addHint)",
                           tone: .neutral, duration: 10, primaryAction: choose, alternateAction: addAll)
     }
 
@@ -128,7 +128,7 @@ public extension PillNotice {
         PillNotice("“\(name)” is joining Que", detail: "\(done) of \(total)", tone: .neutral, duration: nil)
     }
 
-    /// `alreadyInDeck`: pins of this board skipped because they were already in the deck (⌥⇧-click add).
+    /// `alreadyInDeck`: pins of this board skipped because they were already in the deck (click and hold to add all).
     static func boardAdded(added: Int, requested: Int, name: String, alreadyInDeck: Int = 0) -> PillNotice {
         let pins = { (n: Int) in n == 1 ? "1 pin" : "\(n) pins" }
         if added < requested {
@@ -146,7 +146,7 @@ public extension PillNotice {
 
     /// The board link was copied again and its pins are all still in the deck. ⌥-click still opens the picker.
     static func boardAlreadyAdded(name: String, choose: @escaping () -> Void) -> PillNotice {
-        PillNotice("“\(name)” is already in Que", detail: "⌥-click to choose pins anyway",
+        PillNotice("“\(name)” is already in Que", detail: "\(QueControls.clickPhrase) to choose pins anyway",
                    tone: .neutral, duration: 4, alternateAction: choose)
     }
 
@@ -176,7 +176,7 @@ public extension PillNotice {
 
     /// An edited GIF couldn't be made after the preview had closed (the old GIF is still in Que).
     static func gifEditFailed() -> PillNotice {
-        PillNotice("This GIF couldn't be updated", detail: "It's unchanged. ⌥-click Que to try again.", tone: .error, duration: 5)
+        PillNotice("This GIF couldn't be updated", detail: "It's unchanged. \(QueControls.clickPhrase) Que to try again.", tone: .error, duration: 5)
     }
 
     static func gifFailed() -> PillNotice {
