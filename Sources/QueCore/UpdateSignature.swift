@@ -24,6 +24,12 @@ public enum UpdateSignature {
         return key.isValidSignature(signature, for: data)
     }
 
+    /// The updater's gate: true only for a file whose seal matches. No seal, or an unreadable file, is refused.
+    public static func isSealed(fileAt url: URL, signatureBase64: String?, publicKeyBase64: String = publicKey) -> Bool {
+        guard let signature = signatureBase64, let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return false }
+        return isValid(data, signatureBase64: signature, publicKeyBase64: publicKeyBase64)
+    }
+
     /// Base64 signature of `data` (release.sh, via que-sign).
     public static func sign(_ data: Data, privateKeyBase64: String) throws -> String {
         guard let keyData = Data(base64Encoded: privateKeyBase64.trimmingCharacters(in: .whitespacesAndNewlines)) else {

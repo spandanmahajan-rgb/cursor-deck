@@ -92,6 +92,17 @@ public final class ScreenshotWatcher {
         self.watchedDirectoryURL = Self.resolveScreenshotDirectory()
         let path = watchedDirectoryURL.path
 
+        // Every 30 s: follow a new screenshot folder, or retry one that couldn't be opened (e.g. Desktop access
+        // granted after launch). Set up before opening, so a failed open still retries.
+        folderCheckTimer?.invalidate()
+        folderCheckTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self = self, self.source == nil || Self.resolveScreenshotDirectory() != self.watchedDirectoryURL else { return }
+            self.stop()
+            self.start()   // re-resolves the folder
+            self.monitorQueue.async { self.seedExistingFiles() }   // same queue as the change handler; old files aren't new
+        }
+        folderCheckTimer?.tolerance = 10
+
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else {
             return
@@ -118,14 +129,6 @@ public final class ScreenshotWatcher {
         src.resume()
         self.source = src
 
-        folderCheckTimer?.invalidate()
-        folderCheckTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            guard let self = self, Self.resolveScreenshotDirectory() != self.watchedDirectoryURL else { return }
-            self.stop()
-            self.start()   // re-resolves the folder
-            self.monitorQueue.async { self.seedExistingFiles() }   // same queue as the change handler; old files aren't new
-        }
-        folderCheckTimer?.tolerance = 10
     }
 
     public func stop() {

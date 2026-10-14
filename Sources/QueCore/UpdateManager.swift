@@ -9,7 +9,7 @@ import Foundation
 public final class UpdateManager {
     public static let shared = UpdateManager()
 
-    public static let currentVersion = "2.9.0"
+    public static let currentVersion = "2.9.1"
     public static let repoOwner = "spandanmahajan-rgb"
     public static let repoName = "que"
 
@@ -271,6 +271,11 @@ public final class UpdateManager {
         URLSession.shared.dataTask(with: signatureURL) { [weak self] sigData, sigResponse, _ in
             let signature = (sigResponse as? HTTPURLResponse).map { (200...299).contains($0.statusCode) } == true
                 && Self.isTrustedFinalHost(sigResponse?.url?.host) ? sigData.flatMap { String(data: $0, encoding: .utf8) } : nil
+            guard let signature = signature else {
+                // The release has a seal (checked before), so this is the connection: say so, and skip the 5 MB download.
+                DispatchQueue.main.async { self?.downloadFailed("seal download failed", unverified: false) }
+                return
+            }
             self?.downloadZip(from: url, signature: signature)
         }.resume()
 
@@ -280,7 +285,7 @@ public final class UpdateManager {
         downloadAlertShowing = false
     }
 
-    private func downloadZip(from url: URL, signature: String?) {
+    private func downloadZip(from url: URL, signature: String) {
         URLSession.shared.downloadTask(with: url) { [weak self] tempFileUrl, response, error in
             // AUDIT: URLSession deletes `tempFileUrl` the moment this closure returns. The original hopped to
             // the main queue first and used the file afterwards, which only works if the main thread happens
@@ -298,8 +303,7 @@ public final class UpdateManager {
                         .appendingPathComponent("QueUpdate_\(UUID().uuidString).zip")
                     do {
                         try FileManager.default.moveItem(at: tempFileUrl, to: staged)
-                        if let signature = signature, let data = try? Data(contentsOf: staged, options: .mappedIfSafe),
-                           UpdateSignature.isValid(data, signatureBase64: signature) {
+                        if UpdateSignature.isSealed(fileAt: staged, signatureBase64: signature) {
                             stagedURL = staged
                         } else {
                             try? FileManager.default.removeItem(at: staged)
@@ -313,21 +317,28 @@ public final class UpdateManager {
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if self.downloadAlertShowing { NSApp.abortModal() }   // done: the "downloading" window has served its purpose
-                self.log(stagedURL != nil ? "download ok" : "download FAILED: \(failure ?? "unknown error")")
                 guard let stagedURL = stagedURL else {
-                    self.showAlert(
-                        title: "Que couldn't update",
-                        message: failure == Self.unverifiedFailure
-                            ? "This update couldn't be verified as coming from Que, so it wasn't installed. Try again later."
-                            : "The download didn't finish. Check your connection, then try again.",
-                        button: "OK"
-                    )
+                    self.downloadFailed(failure ?? "unknown error", unverified: failure == Self.unverifiedFailure)
                     return
                 }
+                if self.downloadAlertShowing { NSApp.abortModal() }   // done: the "downloading" window has served its purpose
+                self.log("download ok")
                 self.installZipUpdate(downloadedFile: stagedURL)
             }
         }.resume()
+    }
+
+    /// Main queue. Closes the "Getting Que…" window and says what went wrong (the reason goes to the update log).
+    private func downloadFailed(_ reason: String, unverified: Bool) {
+        if downloadAlertShowing { NSApp.abortModal() }
+        log("download FAILED: \(reason)")
+        showAlert(
+            title: "Que couldn't update",
+            message: unverified
+                ? "This update couldn't be verified as coming from Que, so it wasn't installed. Try again later."
+                : "The download didn't finish. Check your connection, then try again.",
+            button: "OK"
+        )
     }
 
     private static let unverifiedFailure = "signature missing or not matching Que's key"

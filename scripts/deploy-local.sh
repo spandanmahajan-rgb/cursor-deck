@@ -253,16 +253,19 @@ for tool in swift lipo codesign plutil ditto xattr osascript defaults open ps cm
 done
 [ "$(plutil -extract CFBundleIdentifier raw -o - "$ROOT/packaging/Info.plist" 2>/dev/null)" = "$BUNDLE_ID" ] \
   || abort "packaging/Info.plist doesn't have bundle ID $BUNDLE_ID."
-[ -d "$DEST_APP" ] || abort "$DEST_APP not found. Install Que from the DMG first."
-[ "$(bundle_id "$DEST_APP")" = "$BUNDLE_ID" ] || abort "$DEST_APP has bundle ID '$(bundle_id "$DEST_APP")', not Que's. Not touching it."
-[ ! -e "$STAGED_APP" ] || abort "$STAGED_APP already exists (from an earlier run?). Look at it and move it away yourself."
-[ -w "$APPS_DIR" ] || abort "Can't write to $APPS_DIR."
 mkdir -p "$RUN_PARENT"
 mkdir "$RUN_DIR" "$LOG_DIR"
-[ "$(stat -f %d "$APPS_DIR")" = "$(stat -f %d "$RUN_DIR")" ] \
-  || abort "$RUN_DIR is on a different disk from $APPS_DIR, so moving Que aside wouldn't be instant."
-require_known_que
-if [ "$QUE_STATE" = installed ]; then echo "  Que is running (pid $QUE_PID)"; else echo "  Que is not running"; fi
+# --check only builds ./Que.app, so it works without Que installed (e.g. someone building from source).
+if [ $CHECK_ONLY = 0 ]; then
+  [ -d "$DEST_APP" ] || abort "$DEST_APP not found. Install Que from the DMG first."
+  [ "$(bundle_id "$DEST_APP")" = "$BUNDLE_ID" ] || abort "$DEST_APP has bundle ID '$(bundle_id "$DEST_APP")', not Que's. Not touching it."
+  [ ! -e "$STAGED_APP" ] || abort "$STAGED_APP already exists (from an earlier run?). Look at it and move it away yourself."
+  [ -w "$APPS_DIR" ] || abort "Can't write to $APPS_DIR."
+  [ "$(stat -f %d "$APPS_DIR")" = "$(stat -f %d "$RUN_DIR")" ] \
+    || abort "$RUN_DIR is on a different disk from $APPS_DIR, so moving Que aside wouldn't be instant."
+  require_known_que
+  if [ "$QUE_STATE" = installed ]; then echo "  Que is running (pid $QUE_PID)"; else echo "  Que is not running"; fi
+fi
 
 # ---------- 2. Build and verify ./Que.app (nothing installed is touched) ----------
 
@@ -279,8 +282,7 @@ run sign         "Sign (ad-hoc)"             codesign --force --deep -s - "$SRC_
 run verify-build "Verify ./Que.app"          verify_app "$SRC_APP"
 
 if [ $CHECK_ONLY = 1 ]; then
-  if [ "$QUE_STATE" = installed ]; then plan="quit Que (pid $QUE_PID) normally, replace"; else plan="replace"; fi
-  echo "✓ Check passed. A deploy would $plan $DEST_APP and keep the old copy in $RUN_PARENT."
+  echo "✓ Check passed: ./Que.app is built, signed and verified. Nothing installed was touched."
   [ $KEEP_LOGS = 1 ] || { rm -rf "$LOG_DIR"; rmdir "$RUN_DIR"; }
   exit 0
 fi

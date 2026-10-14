@@ -884,6 +884,16 @@ func testUpdateSeal() {
     assert(!UpdateSignature.isValid(zip, signatureBase64: seal), "Sealed with another key: fails against Que's key")
     assert(!UpdateSignature.isValid(zip, signatureBase64: "", publicKeyBase64: pub), "No seal fails")
     assert(Data(base64Encoded: UpdateSignature.publicKey)?.count == 32, "Que's public key is a real Ed25519 key")
+    // The install gate itself (what the updater calls on the downloaded file).
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent("que-seal-\(UUID().uuidString).zip")
+    try! zip.write(to: file)
+    assert(UpdateSignature.isSealed(fileAt: file, signatureBase64: seal, publicKeyBase64: pub), "Sealed file installs")
+    assert(!UpdateSignature.isSealed(fileAt: file, signatureBase64: nil, publicKeyBase64: pub), "No seal: refused")
+    assert(!UpdateSignature.isSealed(fileAt: file, signatureBase64: seal), "Wrong key: refused")
+    try! (zip + Data([1])).write(to: file)
+    assert(!UpdateSignature.isSealed(fileAt: file, signatureBase64: seal, publicKeyBase64: pub), "Changed file: refused")
+    try? FileManager.default.removeItem(at: file)
+    assert(!UpdateSignature.isSealed(fileAt: file, signatureBase64: seal, publicKeyBase64: pub), "Missing file: refused")
     print("✅ testUpdateSeal passed!")
 }
 

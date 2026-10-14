@@ -43,10 +43,10 @@ Designers, researchers, and creators gathering visual references suffer from con
 | **Pinterest Boards** | Copy a board link | Que offers the board ("48 pins in “Board”"). `⌥ + Click` opens a picker to choose pins; `⌥ + Click and hold` adds its pins to Que (skipping any already there). Public boards only; up to 100 at a time, "Load More Pins" for the rest. Copying the same board again within 30 minutes reuses what Que already loaded. When Pinterest says to wait, Que waits (answering board and pin links itself) instead of asking again. |
 | **Que Messages** | Automatic | Status and errors appear inside Que itself, which grows from its left edge to fit the text (e.g. "Pinterest is limiting requests"). |
 | **Call Que Over** | Hold `⌥`, or tap `⌃` twice | Two ways, chosen in the welcome tour or the Control Center. Hold `⌥` (the original): Que snaps under the pointer while it's held. Tap `⌃` twice: Que snaps and stays (a soft ripple glows out from its dot) until a drop or another double-tap, so `⌥`-drag stays free for duplicating in Slides and Figma; while snapped, click = Preview Grid. Detected by polling the modifier state, no permissions. Instructions everywhere describe only the chosen way. |
-| **Drop Anywhere** | `⌥ + Drag` and drop | Hold `⌥` to snap Que to the mouse, drag it onto Google Slides, Keynote, Figma or a chat like WhatsApp, and let go (no need to release `⌥` first). Everything lands at once. `⌘` no longer moves Que (since v2.5), so `⌘`-click in browsers and design apps never lands on it. While you select text or drag something else, Que keeps following the pointer instead of freezing in place. |
+| **Drop Anywhere** | `⌥ + Drag`, or tap `⌃` twice then drag | Hold `⌥` (or tap `⌃` twice, if chosen) to snap Que to the mouse, drag it onto Google Slides, Keynote, Figma or a chat like WhatsApp, and let go (no need to release `⌥` first). Everything lands at once. `⌘` no longer moves Que (since v2.5), so `⌘`-click in browsers and design apps never lands on it. While you select text or drag something else, Que keeps following the pointer instead of freezing in place. |
 | **Copy All** | Control Center or right-click menu | Puts every image in Que on the clipboard for pasting. (The `⌘ + Click` gesture for this was removed in v2.5: `⌥ + Drag` drops into chats directly.) |
 | **Edit GIF** | Hover a GIF in the Preview Grid, click the pencil | The preview expands into a small editor with the whole source video as a filmstrip. Drag the edges, or the highlighted part, to choose another 0.5 to 8 seconds, check it in the loop, then Update GIF swaps it in place (same spot, nothing duplicated). Cancel or a failure keeps the original. Que keeps the downloaded video next to its GIF until the GIF leaves Que. |
-| **Preview Grid** | `⌥ + Click` (Option-Click) | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
+| **Preview Grid** | `⌥ + Click`, or tap `⌃` twice then click | Unfurls a floating frosted glass grid displaying all accumulated thumbnails with individual `✕` delete buttons. Click thumbnails to select several (⇧-click for a range, Select All in the header), then drag them out together or remove them with the trash button; dragged images stay in Que. Holding `⌥` from the opening click still selects. Dismisses on `⌥ + Click` outside the thumbnails, clicking outside, or moving the cursor away (Esc can't reach it: the grid never takes keyboard focus). |
 | **Shake to Clear** | Rapid cursor wiggle | Vigorously shaking the mouse back and forth clears Que with a dissolve animation. |
 | **Control Center** | Click Menu Bar Icon | Opens as a native macOS menu (256×372 pt), so the menu bar icon stays highlighted while it's open, like Battery or Wi-Fi. Switches (Que on/off, Smart Filter, Screenshots, Shake to Clear, Launch at Login), actions (Copy All, how Que is called over: "⌥ Hold" or "⌃⌃ Tap", blue while active, click to switch; Clear), then four menu-style rows: How to Use, Check for Updates, Report a Problem and Quit. |
 | **Scroll passes through** | Scroll while Que is under the pointer | Scrolling (e.g. ⌥ + scroll to zoom in Illustrator, Figma, Maps) goes to the app underneath: Que becomes click-through until the wheel is quiet for 0.35 s. The first tick is lost. |
@@ -60,7 +60,8 @@ Designers, researchers, and creators gathering visual references suffer from con
 > **Naming**: users only ever see the name **Que** (the app, the floating badge and its contents). In code and in the
 > sections below, the floating badge is called the *pill* and its contents the *deck* (`DeckQueueManager`, `DeckHUDView`…).
 > Hidden identifiers kept from CursorDeck for compatibility: bundle ID `com.cursordeck.app`, pasteboard marker
-> `com.cursordeck.internal-marker`, `CursorDeck_*` settings keys, and a `CursorDeck.app` copy inside `Que.zip`.
+> `com.cursordeck.internal-marker` and `CursorDeck_*` settings keys. (`Que.zip` held a `CursorDeck.app` copy only in
+> 2.0.0; since 2.1.0 it holds just `Que.app`, so CursorDeck 1.x users reinstall from the DMG.)
 
 ## 4. Key Architectural Hurdles, OS Restrictions & Breakthroughs
 
@@ -217,7 +218,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.9.0**
+* **Current Released Version**: **v2.9.1**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 
