@@ -75,7 +75,7 @@ public extension PillNotice {
             wait = partial == nil ? "Wait a few minutes, then copy the link again." : "Wait a few minutes, then retry."
         }
         let detail = partial.map { "\($0.verb) \($0.done) of \($0.total). \(wait)" } ?? wait
-        return PillNotice("Pinterest request limit reached", detail: detail, tone: .warning, duration: 7)
+        return PillNotice("Pinterest is limiting requests", detail: detail, tone: .warning, duration: 7)
     }
 
     /// Logged-out requests can't tell a secret board from a deleted one: Pinterest answers "not found" for both.

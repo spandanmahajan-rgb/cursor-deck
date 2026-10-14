@@ -245,9 +245,14 @@ public final class PinterestBoardResolver {
 
     public struct RateLimit { public let retryAfter: TimeInterval? }
 
-    /// Until when Pinterest asked Que to wait. While it lasts, Pinterest lookups answer "limited" without asking
+    /// Until when Pinterest asked Que to wait. While it lasts, board lookups answer "limited" without asking
     /// Pinterest: every request during the wait counts against the limit and can make the wait longer.
-    private static var limitedUntil: Date?
+    /// Single pins still ask (1–2 requests); image-server limits don't start a wait (see `rateLimit(in:)`).
+    /// Saved, so quitting or updating Que doesn't forget the wait (asking again too soon restarts it).
+    private static var limitedUntil: Date? = UserDefaults.standard.object(forKey: limitKey) as? Date {
+        didSet { UserDefaults.standard.set(limitedUntil, forKey: limitKey) }
+    }
+    public static let limitKey = "Que_pinterestLimitedUntil"
     private static let limitLock = NSLock()
     /// Used when Pinterest doesn't say how long to wait.
     static let defaultWait: TimeInterval = 5 * 60
@@ -261,7 +266,10 @@ public final class PinterestBoardResolver {
     /// Seconds left before Que may ask Pinterest again, or nil when it may ask now.
     public static func remainingWait(now: Date = Date()) -> TimeInterval? {
         limitLock.lock(); defer { limitLock.unlock() }
-        guard let until = limitedUntil, until > now else { limitedUntil = nil; return nil }
+        guard let until = limitedUntil, until > now else {
+            if limitedUntil != nil { limitedUntil = nil }   // avoids saving on every lookup
+            return nil
+        }
         return until.timeIntervalSince(now)
     }
 
@@ -275,14 +283,33 @@ public final class PinterestBoardResolver {
     static func rateLimit(in response: URLResponse?, data: Data? = nil) -> RateLimit? {
         let http = response as? HTTPURLResponse
         var limited = http?.statusCode == 429
+        var inBody = false
         if !limited, let data = data,
            let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             limited = bodyStatus(body["resource_response"] as? [String: Any]) == 429
+            inBody = limited
         }
         guard limited else { return nil }
-        let retryAfter = retryAfterSeconds(http?.value(forHTTPHeaderField: "Retry-After"))
-        rememberLimit(retryAfter: retryAfter)
+        let header = http?.value(forHTTPHeaderField: "Retry-After")
+        let retryAfter = retryAfterSeconds(header)
+        // Image servers (i.pinimg.com, v.pinimg.com) have their own, stricter limit: it stops that board import only.
+        if !isImageServer(response?.url) { rememberLimit(retryAfter: retryAfter) }
+        let note = limitNote(url: response?.url, inBody: inBody, retryAfter: header)
+        DispatchQueue.main.async { ProblemReport.note(note) }   // called on URLSession queues; the list lives on main
         return RateLimit(retryAfter: retryAfter)
+    }
+
+    public static func isImageServer(_ url: URL?) -> Bool {
+        url?.host?.lowercased().hasSuffix("pinimg.com") ?? false
+    }
+
+    /// "Pinterest 429 (PinResource, in reply, Retry-After none)": which request was refused, for "Report a Problem…".
+    /// Only the server and the endpoint name: never the pin id, board or link.
+    public static func limitNote(url: URL?, inBody: Bool, retryAfter: String?) -> String {
+        let parts = url?.pathComponents ?? []
+        let endpoint = parts.firstIndex(of: "resource").flatMap { $0 + 1 < parts.count ? parts[$0 + 1] : nil }
+        let what = endpoint ?? (parts.contains("pin") ? "pin page" : url?.host ?? "unknown")
+        return "Pinterest 429 (\(what), \(inBody ? "in reply" : "HTTP status"), Retry-After \(retryAfter ?? "none"))"
     }
 
     private static func bodyStatus(_ resourceResponse: [String: Any]?) -> Int? {

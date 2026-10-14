@@ -218,57 +218,66 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     }
 
     /// "Tap ⌃ twice" mode: snapped under the pointer. Any click is then a catch (click = preview, drag = drop), like ⌥
-    /// is today. Cue: a soft light runs around the glass rim. Reduce Motion: the rim just brightens.
+    /// is today. Cue: a ripple of green light flows out of the dot to the edges (no outline).
     public var isTapSnapped = false {
         didSet { if isTapSnapped != oldValue { updateShine() } }
     }
 
-    /// The rim light: a short bright stroke with a glow, travelling the capsule outline. The path goes round twice
-    /// and the stroke moves exactly one lap, so the loop has no seam.
-    private let shineLayer = CAShapeLayer()
-    private static let shineLap: CFTimeInterval = 2.4
-    private static let shineLength: CGFloat = 0.11   // of one lap
+    /// The ripple: one soft ring, round like the dot (a circular radial gradient centred on the dot, as wide as the
+    /// distance to the far end), growing out of the dot and fading. The capsule's edges cut it off as it spreads.
+    /// `shineLayer` holds it and clips it to the capsule (the window is exactly the pill's size). It sits on the glass,
+    /// under the dot and count. Reduce Motion: a steady soft glow around the dot. Keep `RimLight` (WelcomeWindow.swift)
+    /// in step.
+    private let shineLayer = CALayer()
+    private let shineMask = CAShapeLayer()
+    private let ripple = CAGradientLayer()
+    private static let rippleSpread: CFTimeInterval = 3.6   // dot to edges
+    private static let rippleCycle: CFTimeInterval = 5.4    // spread + rest
 
     private func updateShine() {
         guard let layer = layer else { return }
         if shineLayer.superlayer == nil {
-            shineLayer.fillColor = nil
-            shineLayer.lineWidth = 1.5
-            shineLayer.lineCap = .round
-            shineLayer.shadowColor = NSColor.white.cgColor
-            shineLayer.shadowOffset = .zero
-            shineLayer.shadowRadius = 3
-            shineLayer.shadowOpacity = 0.9
-            shineLayer.zPosition = 10
-            layer.addSublayer(shineLayer)
+            let green = Self.emerald
+            ripple.type = .radial
+            ripple.startPoint = CGPoint(x: 0.5, y: 0.5)
+            ripple.endPoint = CGPoint(x: 1, y: 1)
+            // A soft disc with a slightly brighter edge, clear at the rim.
+            ripple.colors = [0.1, 0.12, 0.4, 0].map { green.withAlphaComponent($0).cgColor }
+            ripple.locations = [0, 0.4, 0.8, 1]
+            shineLayer.addSublayer(ripple)
+            shineLayer.mask = shineMask
+            layer.insertSublayer(shineLayer, above: visualEffectView.layer)
         }
+        ripple.removeAllAnimations()
         shineLayer.removeAllAnimations()
         guard isTapSnapped else {
             fadeShine(to: 0)
             return
         }
         layoutShinePath()
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if reduceMotion {
-            // Whole rim, steady: brighter than the usual hairline.
-            shineLayer.strokeColor = NSColor(white: 1, alpha: 0.7).cgColor
-            shineLayer.strokeStart = 0
-            shineLayer.strokeEnd = 1
+        ripple.setAffineTransform(.identity)
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            ripple.setAffineTransform(CGAffineTransform(scaleX: 0.45, y: 0.45))
+            ripple.opacity = 1
         } else {
-            shineLayer.strokeColor = NSColor(white: 1, alpha: 0.95).cgColor
-            let half = Self.shineLength / 2   // the stroke is measured on the doubled path
-            shineLayer.strokeStart = 0
-            shineLayer.strokeEnd = half
-            let start = CABasicAnimation(keyPath: "strokeStart")
-            start.fromValue = 0; start.toValue = 0.5
-            let end = CABasicAnimation(keyPath: "strokeEnd")
-            end.fromValue = half; end.toValue = 0.5 + half
-            let lap = CAAnimationGroup()
-            lap.animations = [start, end]
-            lap.duration = Self.shineLap
-            lap.repeatCount = .infinity
-            lap.timingFunction = CAMediaTimingFunction(name: .linear)
-            shineLayer.add(lap, forKey: "lap")
+            // Both animations run the whole cycle (spread, then rest) so nothing falls back to resting values.
+            let spread = Self.rippleSpread / Self.rippleCycle
+            let grow = CAKeyframeAnimation(keyPath: "transform.scale")
+            grow.values = [0.1, 1.2, 1.2]
+            grow.keyTimes = [0, spread, 1] as [NSNumber]
+            grow.timingFunctions = [CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.35, 1),   // eases out like water
+                                    CAMediaTimingFunction(name: .linear)]
+            let glow = CAKeyframeAnimation(keyPath: "opacity")
+            glow.values = [0, 1, 0, 0]
+            glow.keyTimes = [0, spread * 0.25, spread, 1] as [NSNumber]
+            glow.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeIn),
+                                    CAMediaTimingFunction(name: .linear)]
+            let group = CAAnimationGroup()
+            group.animations = [grow, glow]
+            group.duration = Self.rippleCycle
+            group.repeatCount = .infinity
+            ripple.opacity = 0
+            ripple.add(group, forKey: "ripple")
         }
         fadeShine(to: 1)
     }
@@ -276,24 +285,24 @@ public final class DeckHUDView: NSView, NSDraggingSource {
     private func fadeShine(to opacity: Float) {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = shineLayer.presentation()?.opacity ?? shineLayer.opacity
-        fade.duration = 0.2
+        fade.duration = 0.3
         shineLayer.opacity = opacity
         shineLayer.add(fade, forKey: "fade")
     }
 
-    /// Follows the pill's size (notices grow it) without restarting the lap.
+    /// Follows the pill's size (notices grow it) without restarting the ripples.
     private func layoutShinePath() {
         guard shineLayer.superlayer != nil else { return }
-        let rect = bounds.insetBy(dx: 0.75, dy: 0.75)
-        let radius = rect.height / 2
-        let once = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        let twice = CGMutablePath()
-        twice.addPath(once)
-        twice.addPath(once)
+        let radius = bounds.height / 2
+        let dot = CGPoint(x: dotView.frame.midX, y: dotView.frame.midY)
+        let reach = max(dot.x, bounds.width - dot.x)   // to the far end
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         shineLayer.frame = bounds
-        shineLayer.path = twice
+        shineMask.frame = bounds
+        shineMask.path = CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        ripple.bounds = CGRect(x: 0, y: 0, width: reach * 2, height: reach * 2)   // bounds + position: frame is undefined under a scale
+        ripple.position = dot
         CATransaction.commit()
     }
 

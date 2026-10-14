@@ -704,8 +704,8 @@ final class TourPractice: ObservableObject {
     }
 }
 
-/// A static copy of the Que badge (dark glass capsule, green dot, count) for the tour. `shining`: the light that
-/// runs around the real badge's rim while it's called over with ⌃⌃.
+/// A static copy of the Que badge (dark glass capsule, green dot, count) for the tour. `shining`: the green pulse
+/// the real badge's dot sends out while it's called over with ⌃⌃.
 struct QueBadgeMock: View {
     let count: Int
     var shining = false
@@ -716,39 +716,53 @@ struct QueBadgeMock: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 34)
+        .background(Group { if shining { RimLight() } })   // on the glass, under the dot and count
         .background(Capsule().fill(Color(white: 0.12)))
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
-        .overlay(Group { if shining { RimLight() } })
         .shadow(color: .black.opacity(0.25), radius: 6, y: 3)
     }
 }
 
-/// The badge's rim light in SwiftUI: a short bright stroke with a glow, one lap every 2.4 s (as `DeckHUDView`).
-/// Reduce Motion: the whole rim brightens instead.
+/// The badge's ripple in SwiftUI: one soft round ring of green light grows out of the dot to the edges and fades,
+/// 3.6 s, then a rest to 5.4 s (as `DeckHUDView`). Reduce Motion: a steady glow. Sits under the dot and count in
+/// `QueBadgeMock`.
 struct RimLight: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private static let lap: Double = 2.4
-    private static let length: CGFloat = 0.11
+    var dotX: CGFloat = 17.5   // QueBadgeMock: 14 pt padding + half the 7 pt dot
+    private static let spread = 3.6
+    private static let cycle = 5.4
+    private static let green = Color(red: 0.20, green: 0.85, blue: 0.40)
 
     var body: some View {
-        if reduceMotion {
-            Capsule().strokeBorder(Color.white.opacity(0.7), lineWidth: 1.5)
-        } else {
-            TimelineView(.animation) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                let phase = CGFloat(t.truncatingRemainder(dividingBy: Self.lap) / Self.lap)
-                let end = phase + Self.length
-                ZStack {
-                    segment(from: phase, to: min(end, 1))
-                    if end > 1 { segment(from: 0, to: end - 1) }   // wraps past the path's start
+        GeometryReader { geo in
+            if reduceMotion {
+                ring(in: geo.size, scale: 0.45, opacity: 1)
+            } else {
+                TimelineView(.animation) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.cycle)
+                    let q = min(t / Self.spread, 1)
+                    let eased = 1 - pow(1 - q, 2.5)   // eases out like water
+                    let opacity = q < 0.25 ? sin(q / 0.25 * .pi / 2) : cos((q - 0.25) / 0.75 * .pi / 2)
+                    ring(in: geo.size, scale: 0.1 + 1.1 * eased, opacity: opacity)
                 }
-                .shadow(color: .white.opacity(0.9), radius: 3)
             }
         }
+        .clipShape(Capsule())
+        .allowsHitTesting(false)
     }
 
-    private func segment(from: CGFloat, to: CGFloat) -> some View {
-        Capsule().inset(by: 0.75).trim(from: from, to: to)
-            .stroke(Color.white.opacity(0.95), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+    /// A round gradient centred on the dot, as wide as the distance to the far end.
+    private func ring(in size: CGSize, scale: CGFloat, opacity: Double) -> some View {
+        let reach = max(dotX, size.width - dotX)
+        return Circle()
+            .fill(RadialGradient(stops: [.init(color: Self.green.opacity(0.1), location: 0),
+                                         .init(color: Self.green.opacity(0.12), location: 0.4),
+                                         .init(color: Self.green.opacity(0.4), location: 0.8),
+                                         .init(color: Self.green.opacity(0), location: 1)],
+                                 center: .center, startRadius: 0, endRadius: reach))
+            .frame(width: reach * 2, height: reach * 2)
+            .scaleEffect(scale)
+            .position(x: dotX, y: size.height / 2)
+            .opacity(opacity)
     }
 }

@@ -21,7 +21,12 @@ public enum ProblemReport {
 
     /// Called for every message the badge shows (`CursorHUDPanel.show`).
     public static func record(_ notice: PillNotice, at date: Date = Date()) {
-        let text = sanitized([notice.message, notice.detail].compactMap { $0 }.joined(separator: " / "))
+        note([notice.message, notice.detail].compactMap { $0 }.joined(separator: " / "), at: date)
+    }
+
+    /// A behind-the-scenes line for the report (e.g. which Pinterest request was refused). Same privacy rules.
+    public static func note(_ raw: String, at date: Date = Date()) {
+        let text = sanitized(raw)
         guard !text.isEmpty else { return }
         recent.append((date, text))
         if recent.count > maxRecent { recent.removeFirst(recent.count - maxRecent) }

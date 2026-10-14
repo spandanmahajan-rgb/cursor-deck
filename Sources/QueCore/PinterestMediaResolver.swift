@@ -91,11 +91,7 @@ public final class PinterestMediaResolver {
             done(nil)
             return
         }
-        // Still inside a wait Pinterest asked for: don't ask again (it can make the wait longer).
-        if let wait = PinterestBoardResolver.remainingWait() {
-            done(.rateLimited(retryAfter: wait))
-            return
-        }
+        // No wait check here: one pin is 1–2 requests, so it always asks (only boards hold back during a wait).
 
         if url.host?.lowercased() == "pin.it" {
             var req = URLRequest(url: url)

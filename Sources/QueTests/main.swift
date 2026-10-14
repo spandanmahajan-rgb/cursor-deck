@@ -271,7 +271,7 @@ func testPinterestBoardURLDetection() {
 func testPillNoticeWording() {
     print("Running testPillNoticeWording...")
     let limited = PillNotice.pinterestRateLimited(retryAfter: nil)
-    assert(limited.message.contains("limit reached"), "Rate limit must say the limit was reached")
+    assert(limited.message == "Pinterest is limiting requests", "Rate limit names Pinterest, not the user")
     assert(limited.detail?.contains("few minutes") == true, "Rate limit must say when to retry")
     assert(PillNotice.pinterestRateLimited(retryAfter: 30).detail == "Try again in about a minute.")
     assert(PillNotice.pinterestRateLimited(retryAfter: 150).detail == "Try again in about 3 minutes.")
@@ -652,6 +652,10 @@ func testPinterestWaitIsRemembered() {
     assert(PinterestBoardResolver.remainingWait(now: now.addingTimeInterval(121)) == nil, "Asks again once it's over")
     PinterestBoardResolver.rememberLimit(retryAfter: nil, now: now)
     assert(abs((PinterestBoardResolver.remainingWait(now: now) ?? 0) - 300) < 0.01, "No answer: 5 minutes")
+    let saved = UserDefaults.standard.object(forKey: PinterestBoardResolver.limitKey) as? Date
+    assert(saved.map { abs($0.timeIntervalSince(now) - 300) < 0.01 } == true, "The wait is saved for the next launch")
+    PinterestBoardResolver.forgetLimit()
+    assert(UserDefaults.standard.object(forKey: PinterestBoardResolver.limitKey) == nil, "Forgetting clears the saved wait")
 
     // During the wait, lookups answer straight away without touching the network.
     PinterestBoardResolver.rememberLimit(retryAfter: 600)
@@ -659,9 +663,22 @@ func testPinterestWaitIsRemembered() {
     PinterestBoardResolver().fetchBoard(username: "someone", slug: "refs") { board = $0 }
     if case .failure(.rateLimited(let wait))? = board { assert(wait! > 590, "Reports the time left") }
     else { assert(false, "Board lookup must answer 'limited' at once, got \(String(describing: board))") }
-    var pin: PinterestMediaResult??
-    PinterestMediaResolver.shared.resolveMedia(from: "https://www.pinterest.com/pin/664281013778109217/") { pin = $0 }
-    if case .rateLimited? = pin ?? nil {} else { assert(false, "Pin lookup must answer 'limited' at once") }
+    // Single pins still ask Pinterest during a wait (not checked here: it would make a live request).
+    // Image servers' own limit stops one board import only, never every Pinterest link.
+    assert(PinterestBoardResolver.isImageServer(URL(string: "https://i.pinimg.com/originals/a/b.jpg")))
+    assert(PinterestBoardResolver.isImageServer(URL(string: "https://v1.pinimg.com/videos/x.mp4")))
+    assert(!PinterestBoardResolver.isImageServer(URL(string: "https://www.pinterest.com/resource/PinResource/get/")))
+    assert(!PinterestBoardResolver.isImageServer(URL(string: "https://pin.it/abc")))
+
+    // "Report a Problem…" says which request was refused, never which pin.
+    let pinNote = PinterestBoardResolver.limitNote(
+        url: URL(string: "https://www.pinterest.com/resource/PinResource/get/?source_url=/pin/664281013778109217/"),
+        inBody: true, retryAfter: nil)
+    assert(pinNote == "Pinterest 429 (PinResource, in reply, Retry-After none)", pinNote)
+    let pageNote = PinterestBoardResolver.limitNote(url: URL(string: "https://www.pinterest.com/pin/664281013778109217/"),
+                                                    inBody: false, retryAfter: "120")
+    assert(pageNote == "Pinterest 429 (pin page, HTTP status, Retry-After 120)", pageNote)
+    assert(PillNotice.pinterestRateLimited(retryAfter: 300).message == "Pinterest is limiting requests")
     print("✅ testPinterestWaitIsRemembered passed!")
 }
 
