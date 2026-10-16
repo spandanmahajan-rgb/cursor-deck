@@ -56,7 +56,9 @@ public final class PinterestBoardResolver {
 
     private let session: URLSession
     private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    public static let pageSize = 25
+    /// 100 = the pins Que loads at first (`BoardImportController.pinCap`) in one request. Pinterest blocks a Mac
+    /// for 10 minutes after only a few requests (seen 2026-10-16, exact number unknown), so every request counts.
+    public static let pageSize = 100
 
     /// First path segments that are Pinterest pages, not usernames.
     private static let reservedRoots: Set<String> = [

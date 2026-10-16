@@ -134,14 +134,14 @@ public final class BoardPickerModel: ObservableObject {
     /// Pinterest sometimes marks a board as finished ("-end-") after the first page for a given session even though
     /// it has many more pins (seen on a 105-pin board: 25 pins, then "end", in roughly 1 of 3 fresh sessions).
     /// When a page claims to be the last while clearly fewer pins than the board reports are loaded, ask again
-    /// on a brand-new session, up to 5 times (measured: ~half of fresh sessions got a cut-off first page on a busy
-    /// day, so 5 retries take a short load from ~1 in 2 to ~1 in 50). Boards that page normally never retry.
+    /// on a brand-new session, once. (It used to be up to 5 times, but each retry counts against Pinterest's now much
+    /// stricter limit and one board copy could get Que blocked for 10 minutes.) Boards that page normally never retry.
     private func fetchPage(bookmark: String?, attempt: Int = 0,
                            completion: @escaping (Result<(pins: [PinterestBoardPin], nextBookmark: String?), PinterestError>) -> Void) {
         resolver.fetchPins(of: board, bookmark: bookmark) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                if case .success(let page) = result, page.nextBookmark == nil, attempt < 5,
+                if case .success(let page) = result, page.nextBookmark == nil, attempt < 1,
                    self.pins.count + page.pins.count < self.board.pinCount - 5 {
                     self.resolver = PinterestBoardResolver()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
