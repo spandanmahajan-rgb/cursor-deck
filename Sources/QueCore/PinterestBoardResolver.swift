@@ -101,9 +101,89 @@ public final class PinterestBoardResolver {
 
     // MARK: - Requests
 
-    /// Board name and pin count (one request).
+    /// Board name and pin count (one request), from the board's own web page: it also carries the first pins, so
+    /// the first `fetchPins` needs no request. Falls back to `BoardResource` when the page can't be read.
+    ///
+    /// Why the page: since 2026-10-16 Pinterest refuses `BoardResource` from logged-out apps after very few
+    /// requests (HTTP 429, 10-minute wait), while the board page and `BoardFeedResource` kept answering.
     public func fetchBoard(username: String, slug: String,
                            completion: @escaping (Result<PinterestBoard, PinterestError>) -> Void) {
+        fetchBoardPage(username: username, slug: slug) { result in
+            switch result {
+            case .success(let board): completion(.success(board))
+            case .failure(.rateLimited(let wait)): completion(.failure(.rateLimited(retryAfter: wait)))
+            case .failure: self.fetchBoardResource(username: username, slug: slug, completion: completion)
+            }
+        }
+    }
+
+    /// Pins the board page already carried, handed out once by the first `fetchPins` (bookmark nil) for that board.
+    private var firstPage: (boardID: String, pins: [PinterestBoardPin], next: String?)?
+    private let firstPageLock = NSLock()
+
+    private func fetchBoardPage(username: String, slug: String,
+                                completion: @escaping (Result<PinterestBoard, PinterestError>) -> Void) {
+        if let wait = Self.remainingWait() {
+            completion(.failure(.rateLimited(retryAfter: wait)))
+            return
+        }
+        guard let user = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let board = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://www.pinterest.com/\(user)/\(board)/") else {
+            completion(.failure(.unexpected))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue("text/html", forHTTPHeaderField: "Accept")
+        session.dataTask(with: req) { data, response, _ in
+            if let limit = Self.rateLimit(in: response) {
+                completion(.failure(.rateLimited(retryAfter: limit.retryAfter)))
+                return
+            }
+            guard let data = data, (response as? HTTPURLResponse)?.statusCode == 200,
+                  let page = Self.parseBoardPage(data, username: username, slug: slug) else {
+                completion(.failure(.unexpected))
+                return
+            }
+            if let pins = page.pins {
+                self.firstPageLock.lock()
+                self.firstPage = (page.board.id, pins, page.nextBookmark)
+                self.firstPageLock.unlock()
+            }
+            completion(.success(page.board))
+        }.resume()
+    }
+
+    /// Reads a board page's embedded data (`__PWS_INITIAL_PROPS__`): the board, and its first pins with the bookmark
+    /// for the next ones. `pins` is nil for boards with sections: the page's feed may leave section pins out, so
+    /// those boards load every pin through `BoardFeedResource` as before. Nil when the page has no matching board.
+    public static func parseBoardPage(_ data: Data, username: String, slug: String)
+        -> (board: PinterestBoard, pins: [PinterestBoardPin]?, nextBookmark: String?)? {
+        guard let html = String(data: data, encoding: .utf8),
+              let tag = html.range(of: "id=\"__PWS_INITIAL_PROPS__\""),
+              let start = html[tag.upperBound...].range(of: ">"),
+              let end = html[start.upperBound...].range(of: "</script>"),
+              let props = try? JSONSerialization.jsonObject(with: Data(html[start.upperBound..<end.lowerBound].utf8)) as? [String: Any],
+              let state = props["initialReduxState"] as? [String: Any],
+              let boards = (state["boards"] as? [String: Any])?.values.compactMap({ $0 as? [String: Any] }) else { return nil }
+        let path = "/\(username)/\(slug)/".lowercased()
+        guard let data = boards.first(where: { ($0["url"] as? String)?.lowercased() == path }) ?? (boards.count == 1 ? boards[0] : nil),
+              let id = data["id"] as? String, let name = data["name"] as? String else { return nil }
+        let board = PinterestBoard(id: id, name: name, pinCount: (data["pin_count"] as? NSNumber)?.intValue ?? 0,
+                                   username: username, slug: slug)
+        guard (data["section_count"] as? NSNumber)?.intValue ?? 0 == 0 else { return (board, nil, nil) }
+        let feeds = ((state["resources"] as? [String: Any])?["BoardFeedResource"] as? [String: Any])?
+            .compactMap { $0.value as? [String: Any] } ?? []
+        guard let feed = feeds.first(where: { !(($0["data"] as? [Any])?.isEmpty ?? true) }) else { return (board, nil, nil) }
+        let pins = (feed["data"] as? [[String: Any]] ?? []).compactMap(Self.pin(from:))
+        let next = (feed["nextBookmark"] as? String).flatMap { $0.isEmpty || $0 == "-end-" ? nil : $0 }
+        return (board, pins.isEmpty ? nil : pins, next)
+    }
+
+    /// Board name and pin count through the `BoardResource` endpoint (the fallback).
+    private func fetchBoardResource(username: String, slug: String,
+                                    completion: @escaping (Result<PinterestBoard, PinterestError>) -> Void) {
         let options: [String: Any] = ["username": username, "slug": slug, "field_set_key": "detailed"]
         // Strong capture on purpose: the closure belongs to the URL task (no retain cycle), and a resolver created
         // just for this lookup must live until the follow-up profile check is done.
@@ -148,6 +228,16 @@ public final class PinterestBoardResolver {
     /// One page of pins (25). `nextBookmark` is nil when there are no more pages.
     public func fetchPins(of board: PinterestBoard, bookmark: String?,
                           completion: @escaping (Result<(pins: [PinterestBoardPin], nextBookmark: String?), PinterestError>) -> Void) {
+        if bookmark == nil {
+            firstPageLock.lock()
+            let first = firstPage?.boardID == board.id ? firstPage : nil
+            if first != nil { firstPage = nil }
+            firstPageLock.unlock()
+            if let first = first {
+                completion(.success((first.pins, first.next)))
+                return
+            }
+        }
         let path = "/\(board.username)/\(board.slug)/"
         var options: [String: Any] = [
             "board_id": board.id, "board_url": path, "page_size": Self.pageSize, "field_set_key": "react_grid_pin",

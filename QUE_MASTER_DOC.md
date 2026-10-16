@@ -167,7 +167,7 @@ Sources/
 │   ├── ClipboardWatcher.swift         # 80ms pasteboard poller with Async Retry Ladder & Smart Filter
 │   ├── ScreenshotWatcher.swift        # DispatchSource kernel watcher on ~/Desktop for screenshots
 │   ├── PinterestMediaResolver.swift   # URL parser & API scraper for Pinterest video pin MP4 streams
-│   ├── PinterestBoardResolver.swift   # Public board info + paged pins (fresh session per board, early-end retries)
+│   ├── PinterestBoardResolver.swift   # Board info + first pins from the board page, then paged pins (BoardResource only as fallback)
 │   ├── BoardImportController.swift    # Board offer, picker model, ordered downloads into the deck, duplicate tracking
 │   ├── BoardPickerPanel.swift         # Board picker panel (grows out of the pill), SwiftUI grid of pins
 │   ├── PillNotice.swift               # The one message type the pill shows, plus its wording catalogue
@@ -218,7 +218,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.9.2**
+* **Current Released Version**: **v2.9.3**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 

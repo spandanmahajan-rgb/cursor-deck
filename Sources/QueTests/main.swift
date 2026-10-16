@@ -701,6 +701,27 @@ func testSnapEndsWhenQueEmpties() {
     print("✅ testSnapEndsWhenQueEmpties passed!")
 }
 
+func testBoardPageParsing() {
+    print("Running testBoardPageParsing...")
+    func page(sections: Int, bookmark: String, url: String = "/Someone/Brand-Refs/") -> Data {
+        let pin = #"{"type":"pin","id":"11","images":{"orig":{"url":"https://i.pinimg.com/originals/a.jpg"},"236x":{"url":"https://i.pinimg.com/236x/a.jpg"}}}"#
+        let props = #"{"initialReduxState":{"boards":{"77":{"id":"77","name":"Brand refs","url":"\#(url)","pin_count":105,"section_count":\#(sections)}},"resources":{"BoardFeedResource":{"k":{"data":[\#(pin),{"type":"story"}],"nextBookmark":"\#(bookmark)"}}}}}"#
+        return Data(#"<html><script id="__PWS_INITIAL_PROPS__" type="application/json">\#(props)</script></html>"#.utf8)
+    }
+    let parsed = PinterestBoardResolver.parseBoardPage(page(sections: 0, bookmark: "abc"), username: "someone", slug: "brand-refs")
+    assert(parsed?.board == PinterestBoard(id: "77", name: "Brand refs", pinCount: 105, username: "someone", slug: "brand-refs"),
+           "Board info comes from the page (link case doesn't matter)")
+    assert(parsed?.pins?.map(\.id) == ["11"], "First pins come from the page; non-pins are skipped")
+    assert(parsed?.nextBookmark == "abc", "Keeps the bookmark for the next pins")
+    assert(PinterestBoardResolver.parseBoardPage(page(sections: 0, bookmark: "-end-"), username: "someone", slug: "brand-refs")?
+           .nextBookmark == nil, "-end- means no more pins")
+    let sectioned = PinterestBoardResolver.parseBoardPage(page(sections: 2, bookmark: "abc"), username: "someone", slug: "brand-refs")
+    assert(sectioned?.board.id == "77" && sectioned?.pins == nil, "Boards with sections load their pins the old way (keeps section pins)")
+    assert(PinterestBoardResolver.parseBoardPage(Data("<html>login</html>".utf8), username: "a", slug: "b") == nil,
+           "A page without board data falls back to the old lookup")
+    print("✅ testBoardPageParsing passed!")
+}
+
 func testPinterestLiveBoard() {
     print("Running testPinterestLiveBoard...")
     let sem = DispatchSemaphore(value: 0)
@@ -1409,5 +1430,6 @@ testCallStyleWording()
 testPinterestWaitIsRemembered()
 testSnapEndsWhenQueEmpties()
 testHoldAddsWholeBoard()
+testBoardPageParsing()
 if runLiveTests { testPinterestLiveBoard() }
 print("All verification tests passed successfully! 🚀\n")
