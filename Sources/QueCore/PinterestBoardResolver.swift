@@ -112,6 +112,19 @@ public final class PinterestBoardResolver {
             switch result {
             case .success(let board): completion(.success(board))
             case .failure(.rateLimited(let wait)): completion(.failure(.rateLimited(retryAfter: wait)))
+            case .failure(.notFound):
+                // The page loaded but holds no such board: missing, secret, or on a private profile (Pinterest serves
+                // the same empty page for all three). Ask about the profile first: `UserResource` still answers, while
+                // `BoardResource` is the refused one and would show "limiting requests" for a board that isn't there.
+                self.isPrivateProfile(username: username) { isPrivate in
+                    switch isPrivate {
+                    case true?: completion(.failure(.privateProfile))
+                    // Public profile and an intact page without the board. Not asking BoardResource: a refusal there
+                    // starts the shared wait, which would then block copying the next (real) board.
+                    case false?: completion(.failure(.notFound))
+                    case nil: self.fetchBoardResource(username: username, slug: slug, completion: completion)
+                    }
+                }
             case .failure: self.fetchBoardResource(username: username, slug: slug, completion: completion)
             }
         }
@@ -141,9 +154,12 @@ public final class PinterestBoardResolver {
                 completion(.failure(.rateLimited(retryAfter: limit.retryAfter)))
                 return
             }
-            guard let data = data, (response as? HTTPURLResponse)?.statusCode == 200,
-                  let page = Self.parseBoardPage(data, username: username, slug: slug) else {
+            guard let data = data, (response as? HTTPURLResponse)?.statusCode == 200 else {
                 completion(.failure(.unexpected))
+                return
+            }
+            guard let page = Self.parseBoardPage(data, username: username, slug: slug) else {
+                completion(.failure(Self.boardPageIsReadable(data) ? .notFound : .unexpected))
                 return
             }
             if let pins = page.pins {
@@ -160,12 +176,7 @@ public final class PinterestBoardResolver {
     /// those boards load every pin through `BoardFeedResource` as before. Nil when the page has no matching board.
     public static func parseBoardPage(_ data: Data, username: String, slug: String)
         -> (board: PinterestBoard, pins: [PinterestBoardPin]?, nextBookmark: String?)? {
-        guard let html = String(data: data, encoding: .utf8),
-              let tag = html.range(of: "id=\"__PWS_INITIAL_PROPS__\""),
-              let start = html[tag.upperBound...].range(of: ">"),
-              let end = html[start.upperBound...].range(of: "</script>"),
-              let props = try? JSONSerialization.jsonObject(with: Data(html[start.upperBound..<end.lowerBound].utf8)) as? [String: Any],
-              let state = props["initialReduxState"] as? [String: Any],
+        guard let state = boardPageState(data),
               let boards = (state["boards"] as? [String: Any])?.values.compactMap({ $0 as? [String: Any] }) else { return nil }
         let path = "/\(username)/\(slug)/".lowercased()
         guard let data = boards.first(where: { ($0["url"] as? String)?.lowercased() == path }) ?? (boards.count == 1 ? boards[0] : nil),
@@ -181,6 +192,21 @@ public final class PinterestBoardResolver {
         return (board, pins.isEmpty ? nil : pins, next)
     }
 
+    /// True when the page's data is intact (it has a `boards` list, empty or not). An intact page without the board
+    /// means Pinterest doesn't show that board to logged-out visitors; an unreadable page means the format changed.
+    public static func boardPageIsReadable(_ data: Data) -> Bool { boardPageState(data) != nil }
+
+    private static func boardPageState(_ data: Data) -> [String: Any]? {
+        guard let html = String(data: data, encoding: .utf8),
+              let tag = html.range(of: "id=\"__PWS_INITIAL_PROPS__\""),
+              let start = html[tag.upperBound...].range(of: ">"),
+              let end = html[start.upperBound...].range(of: "</script>"),
+              let props = try? JSONSerialization.jsonObject(with: Data(html[start.upperBound..<end.lowerBound].utf8)) as? [String: Any],
+              let state = props["initialReduxState"] as? [String: Any],
+              state["boards"] is [String: Any] else { return nil }
+        return state
+    }
+
     /// Board name and pin count through the `BoardResource` endpoint (the fallback).
     private func fetchBoardResource(username: String, slug: String,
                                     completion: @escaping (Result<PinterestBoard, PinterestError>) -> Void) {
@@ -193,7 +219,7 @@ public final class PinterestBoardResolver {
                 // "Not found" also happens for public boards on a private profile; check which, so the
                 // message points at the real reason instead of "secret or deleted".
                 self.isPrivateProfile(username: username) { isPrivate in
-                    completion(.failure(isPrivate ? .privateProfile : .notFound))
+                    completion(.failure(isPrivate == true ? .privateProfile : .notFound))
                 }
             case .failure(let error):
                 completion(.failure(error))
@@ -212,13 +238,13 @@ public final class PinterestBoardResolver {
     }
 
     /// Whether `username` has a private profile (verified on a real account: Pinterest returns a stub user
-    /// with `is_private_profile: true` and none of its boards). Errors count as "not private".
-    private func isPrivateProfile(username: String, completion: @escaping (Bool) -> Void) {
+    /// with `is_private_profile: true` and none of its boards). nil when Pinterest didn't answer (error, limit).
+    private func isPrivateProfile(username: String, completion: @escaping (Bool?) -> Void) {
         let options: [String: Any] = ["username": username, "field_set_key": "profile"]
         request("UserResource", sourcePath: "/\(username)/", options: options) { result in
             guard case .success(let body) = result,
                   let data = (body["resource_response"] as? [String: Any])?["data"] as? [String: Any] else {
-                completion(false)
+                completion(nil)
                 return
             }
             completion(data["is_private_profile"] as? Bool == true)

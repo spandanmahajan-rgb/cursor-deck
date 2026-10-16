@@ -218,7 +218,7 @@ The entire build, codesigning, packaging, git tagging, and GitHub release is aut
 
 ## 7. Current Project State & Ongoing Discussions
 
-* **Current Released Version**: **v2.9.3**
+* **Current Released Version**: **v2.9.4**
 * **Repository**: `spandanmahajan-rgb/que` (renamed from `cursor-deck`; GitHub redirects the old address)
 * **Under Discussion**: nothing open right now.
 

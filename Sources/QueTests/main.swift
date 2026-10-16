@@ -291,6 +291,11 @@ func testPillNoticeWording() {
     let prep = PillNotice.boardPreparing(name: "Refs")
     assert(prep.duration == nil && prep.message.hasSuffix("is joining Que"), "⌘-click turns the offer into progress that stays until done")
     assert(PillNotice.boardOnPrivateProfile().message == "This board is on a private profile")
+    // The notice shows its detail on one line and cuts it at 260 pt (DeckHUDView.noticeMaxTextWidth): keep these whole.
+    for notice in [PillNotice.boardNotFound(), PillNotice.boardOnPrivateProfile()] {
+        let width = (notice.detail! as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11)]).width
+        assert(width <= 250, "Notice detail would be cut off (\(Int(width)) pt): \(notice.detail!)")
+    }
     let again = PillNotice.boardAlreadyAdded(name: "Refs", choose: {})
     assert(again.message == "“Refs” is already in Que" && again.alternateAction != nil && again.primaryAction == nil,
            "Re-copied board: says so, ⌥-click opens the picker, nothing is added again")
@@ -644,6 +649,7 @@ func testCallStyleWording() {
 
 func testPinterestWaitIsRemembered() {
     print("Running testPinterestWaitIsRemembered...")
+    PinterestBoardResolver.forgetLimit()   // a refused live check in an earlier run is saved and would skew this
     defer { PinterestBoardResolver.forgetLimit() }
     let now = Date()
     PinterestBoardResolver.rememberLimit(retryAfter: 120, now: now)
@@ -719,6 +725,12 @@ func testBoardPageParsing() {
     assert(sectioned?.board.id == "77" && sectioned?.pins == nil, "Boards with sections load their pins the old way (keeps section pins)")
     assert(PinterestBoardResolver.parseBoardPage(Data("<html>login</html>".utf8), username: "a", slug: "b") == nil,
            "A page without board data falls back to the old lookup")
+    // A page that loads but lists no boards (missing board or private profile) is told apart from a page we can't read.
+    let empty = Data(#"<script id="__PWS_INITIAL_PROPS__">{"initialReduxState":{"boards":{}}}</script>"#.utf8)
+    assert(PinterestBoardResolver.parseBoardPage(empty, username: "a", slug: "b") == nil && PinterestBoardResolver.boardPageIsReadable(empty),
+           "Intact page without the board: ask about the profile, not BoardResource")
+    assert(!PinterestBoardResolver.boardPageIsReadable(Data("<html>login</html>".utf8)), "Unreadable page: old lookup")
+    assert(PinterestBoardResolver.boardPageIsReadable(page(sections: 0, bookmark: "abc")), "A normal board page is readable")
     print("✅ testBoardPageParsing passed!")
 }
 

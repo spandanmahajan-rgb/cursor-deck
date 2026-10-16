@@ -80,7 +80,7 @@ public extension PillNotice {
 
     /// Logged-out requests can't tell a secret board from a deleted one: Pinterest answers "not found" for both.
     static func boardNotFound() -> PillNotice {
-        PillNotice("Board not found", detail: "It's secret or was deleted. Only public boards can be added.",
+        PillNotice("Board not found", detail: "It's secret or deleted. Try a public board.",
                    tone: .error, duration: 5)
     }
 
